@@ -131,7 +131,7 @@ const StarRow=({label,value,onChange})=>(
 function useToast(){
   const [t,setT]=useState(null);
   const tRef=useRef(null);
-  const show=(msg,color=C.accent,onUndo=null)=>{if(tRef.current)clearTimeout(tRef.current);setT({msg,color,onUndo});tRef.current=setTimeout(()=>setT(null),onUndo?5000:2600);};
+  const show=(msg,color=C.accent,onUndo=null,duration=0)=>{if(tRef.current)clearTimeout(tRef.current);setT({msg,color,onUndo});tRef.current=setTimeout(()=>setT(null),duration||( onUndo?5000:2600));};
   const doUndo=()=>{if(t?.onUndo){t.onUndo();setT(null);}};
   const el=t?<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:C.panel,border:`1px solid ${t.color}`,color:t.color,borderRadius:8,padding:"10px 20px",fontSize:13,fontWeight:600,zIndex:300,boxShadow:"0 4px 20px #0008",display:"flex",alignItems:"center",gap:12,whiteSpace:"nowrap"}}>
     <span>{t.msg}</span>
@@ -2456,7 +2456,7 @@ function ProfileTab({data,setData,toast}){
 
 // ── QUICK TRIAL MODE ──────────────────────────────
 // ── QUICK TRIAL MODE ──────────────────────────────
-function QuickTrialMode({rackets,stringSetups,strings,trials,setTrials,cards,setCards,onClose,toast}){
+function QuickTrialMode({rackets,stringSetups,strings,trials,setTrials,practices,setPractices,cards,setCards,onClose,toast}){
   const [selected,setSelected]=useState(null);
   const [adding,setAdding]=useState(false);
   const [addF,setAddF]=useState({racket:"",string:"",stringCross:"",tensionMain:"",tensionCross:""});
@@ -2488,11 +2488,21 @@ function QuickTrialMode({rackets,stringSetups,strings,trials,setTrials,cards,set
 
   const handleSave=()=>{
     const card=cards.find(c=>c.id===selected);if(!card)return;
-    const trial={id:`t${Date.now()}`,date:new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"}),racketName:card.racket,string:card.string||"",stringCross:card.stringCross||"",tensionMain:card.tensionMain||"",tensionCross:card.tensionCross||"",temp:"",venue:"",judgment:"保留",spin:eval_.spin,control:eval_.safety,power:eval_.power,feel:eval_.hold,info:eval_.info,strokeNote:eval_.goodShots.length>0?"良: "+eval_.goodShots.join(", "):"",serveNote:"",volleyNote:"",generalNote:eval_.memo,sessions:[]};
-    const updated=[trial,...(trials||[])];
-    setTrials(updated);save(KEYS.trials,updated);
+    const todayDate=new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
+    const trial={id:`t${Date.now()}`,date:todayDate,racketName:card.racket,string:card.string||"",stringCross:card.stringCross||"",tensionMain:card.tensionMain||"",tensionCross:card.tensionCross||"",temp:"",venue:"",judgment:"保留",spin:eval_.spin,control:eval_.safety,power:eval_.power,feel:eval_.hold,info:eval_.info,strokeNote:eval_.goodShots.length>0?"良: "+eval_.goodShots.join(", "):"",serveNote:"",volleyNote:"",generalNote:eval_.memo,sessions:[]};
+    const updatedTrials=[trial,...(trials||[])];
+    setTrials(updatedTrials);save(KEYS.trials,updatedTrials);
+    // 同じ日の練習レコードに自動紐づけ
+    const matchingPractices=(practices||[]).filter(p=>p.date===todayDate);
+    let linked=false;
+    if(matchingPractices.length>0){
+      const target=matchingPractices[0]; // 最新（先頭）
+      const updatedPractices=(practices||[]).map(p=>p.id===target.id?{...p,hasTrial:true,trialRacketName:card.racket,trialString:card.string||"",trialStringCross:card.stringCross||"",trialTensionMain:card.tensionMain||"",trialTensionCross:card.tensionCross||"",trialSpin:eval_.spin,trialControl:eval_.safety,trialPower:eval_.power,trialFeel:eval_.hold,trialInfo:eval_.info,trialJudgment:"保留",trialNote:eval_.memo}:p);
+      setPractices(updatedPractices);save(KEYS.practices,updatedPractices);
+      linked=true;
+    }
     persistCards(cards.filter(c=>c.id!==selected));
-    toast.show("✅ 試打タブに保存 → カード削除");
+    toast.show(linked?"✅ 試打タブに保存 → 練習と紐づけ":"✅ 試打タブに保存",C.accent,null,linked?4000:2600);
     setSelected(null);setEval({info:3,power:3,spin:3,hold:3,swing:3,safety:3,goodShots:[],memo:""});
   };
 
@@ -3009,7 +3019,7 @@ function TennisDB(){
       `}</style>
       {toast.el}
       {showClaudeShare&&<ClaudeShareModal onClose={()=>setShowClaudeShare(false)} data={{profile,rackets,strings,measurements,tournaments,practices,trials,mental,next}} toast={toast}/>}
-      {quickTrial&&<QuickTrialMode rackets={rackets} stringSetups={stringSetups} strings={strings} trials={trials} setTrials={v=>{setTrials(v);}} cards={quickTrialCards} setCards={setQuickTrialCards} onClose={()=>setQuickTrial(false)} toast={toast}/>}
+      {quickTrial&&<QuickTrialMode rackets={rackets} stringSetups={stringSetups} strings={strings} trials={trials} setTrials={v=>{setTrials(v);}} practices={practices} setPractices={v=>{setPractices(v);}} cards={quickTrialCards} setCards={setQuickTrialCards} onClose={()=>setQuickTrial(false)} toast={toast}/>}
       {daysSinceExport>=3&&(
         <div onClick={handleExport} style={{background:"#2e0505",border:"1px solid #b45252",borderRadius:8,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
           <span style={{fontSize:16}}>⚠️</span>
