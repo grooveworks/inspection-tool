@@ -24,7 +24,7 @@
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
-const APP_VERSION="1.8.0"; // 2026/04/08
+const APP_VERSION="1.8.1"; // 2026/04/08
 const C = {
   bg:"#0a0c10", panel:"#111318", panel2:"#0d1018", panel3:"#0a0d14",
   border:"#1e2330", accent:"#00e5a0", accentDim:"#00b87a",
@@ -3046,7 +3046,7 @@ function TennisDB(){
           <h1 style={{fontSize:19,fontWeight:800,letterSpacing:"-0.02em",background:`linear-gradient(90deg,${C.accent},#60e0ff)`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0}}>ゆっけ Tennis DB</h1>
           <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>
             {user?<span style={{color:syncing?"#fbbf24":"#60a5fa"}}>{syncing?"☁️ 同期中...":"☁️ "+user.email.split("@")[0]}</span>:<span style={{color:C.red}}>⚠ オフライン</span>}
-            {" · "}大会 {tournaments.length} / 練習 {practices.length} / 試打 {trials.length} <span style={{color:C.border,marginLeft:4}}>v{APP_VERSION}</span>
+            {" · "}大会 {tournaments.length} / 練習 {practices.length} / 試打 {trials.length} <span style={{color:"#444",marginLeft:4}}>v{APP_VERSION}</span>
           </div>
         </div>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
