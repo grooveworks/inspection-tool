@@ -88,6 +88,70 @@ function renderList(app){
     fm.appendChild(h("div",{style:{display:"flex",gap:"8px"}},h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"none",background:"#16a34a",color:"#fff",fontSize:"13px",fontWeight:"700"},onClick:async()=>{const dims=data.preset==="yes"?JSON.parse(JSON.stringify(PRESET)):[];const meas={};dims.forEach(d=>meas[d.id]=Array(ROUNDS).fill(""));const proj={id:genId(),partName:data.partName,drawingNo:data.drawingNo,dims,meas,inspector:"",date:new Date().toISOString().split("T")[0],serial:"",createdAt:Date.now(),updatedAt:Date.now()};await Store.saveProject(proj);openProject(proj.id);}},"作成"),h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",color:"#64748b",fontSize:"13px",fontWeight:"600"},onClick:()=>fm.remove()},"キャンセル")));
     document.getElementById("add-btn").after(fm);
   }},"＋ 新しい案件を作成"));
+  // Import button
+  app.appendChild(h("button",{id:"import-btn",style:{width:"100%",padding:"12px",borderRadius:"10px",border:"2px solid #93c5fd",background:"#eff6ff",fontSize:"14px",fontWeight:"700",color:"#2563eb",marginBottom:"16px"},onClick:()=>{
+    if(document.getElementById("import-form"))return;
+    const fm=h("div",{id:"import-form",style:{background:"#eff6ff",border:"2px solid #93c5fd",borderRadius:"10px",padding:"16px",marginBottom:"16px"}});
+    fm.appendChild(h("div",{style:{fontSize:"14px",fontWeight:"700",color:"#2563eb",marginBottom:"4px"}},"📋 データインポート"));
+    fm.appendChild(h("div",{style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},"Claudeから出力されたJSONテキストを貼り付けてください"));
+    const ta=h("textarea",{id:"import-ta",placeholder:'ここにJSONを貼り付け...',style:{width:"100%",height:"120px",padding:"10px",fontSize:"12px",fontFamily:"'SF Mono','Consolas',monospace",border:"2px solid #e2e8f0",borderRadius:"6px",outline:"none",resize:"vertical",boxSizing:"border-box",background:"#fff"}});
+    ta.addEventListener("focus",()=>ta.style.borderColor="#3b82f6");
+    ta.addEventListener("blur",()=>ta.style.borderColor="#e2e8f0");
+    fm.appendChild(ta);
+    const errEl=h("div",{id:"import-err",style:{fontSize:"12px",color:"#dc2626",marginTop:"6px",display:"none"}});
+    fm.appendChild(errEl);
+    const prevEl=h("div",{id:"import-preview",style:{marginTop:"8px",display:"none"}});
+    fm.appendChild(prevEl);
+    fm.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"10px"}},
+      h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"none",background:"#2563eb",color:"#fff",fontSize:"13px",fontWeight:"700"},onClick:async()=>{
+        const raw=document.getElementById("import-ta").value.trim();
+        const err=document.getElementById("import-err");
+        err.style.display="none";
+        try{
+          const data=JSON.parse(raw);
+          if(!data.dims||!Array.isArray(data.dims)||data.dims.length===0){err.textContent="寸法データ(dims)がありません";err.style.display="";return;}
+          // Validate dims
+          for(const d of data.dims){if(!d.name||d.nominal==null||d.upper==null||d.lower==null){err.textContent="寸法データの形式が不正です（name,nominal,upper,lowerが必要）";err.style.display="";return;}}
+          // Create project
+          const dims=data.dims.map((d,i)=>({id:i+1,name:d.name,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower)}));
+          const meas={};dims.forEach(d=>meas[d.id]=Array(ROUNDS).fill(""));
+          const proj={id:genId(),partName:data.partName||"",drawingNo:data.drawingNo||"",dims,meas,inspector:"",date:new Date().toISOString().split("T")[0],serial:"",createdAt:Date.now(),updatedAt:Date.now()};
+          await Store.saveProject(proj);
+          openProject(proj.id);
+        }catch(e){err.textContent="JSONの解析に失敗しました: "+e.message;err.style.display="";}
+      }},"取込"),
+      h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"none",background:"#64748b",color:"#fff",fontSize:"13px",fontWeight:"700"},onClick:()=>{
+        // Preview
+        const raw=document.getElementById("import-ta").value.trim();
+        const err=document.getElementById("import-err");
+        const prev=document.getElementById("import-preview");
+        err.style.display="none";prev.style.display="none";
+        try{
+          const data=JSON.parse(raw);
+          if(!data.dims||!Array.isArray(data.dims)){err.textContent="寸法データ(dims)がありません";err.style.display="";return;}
+          prev.innerHTML="";prev.style.display="";
+          prev.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"700",marginBottom:"6px",color:"#334155"}},"プレビュー: "+(data.partName||"品名なし")+" / "+(data.drawingNo||"図番なし")+" / "+data.dims.length+"項目"));
+          const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"11px",background:"#fff",borderRadius:"6px",overflow:"hidden"}});
+          const thr=h("tr",{style:{background:"#334155",color:"#fff"}});
+          ["寸法","公差域","上限","中間","下限"].forEach(t=>thr.appendChild(h("th",{style:{padding:"4px 6px"}},t)));
+          tbl.appendChild(h("thead",{},thr));
+          const tbd=h("tbody",{});
+          data.dims.forEach(d=>{
+            const nom=parseFloat(d.nominal),up=parseFloat(d.upper),lo=parseFloat(d.lower);
+            const tr=h("tr",{style:{borderBottom:"1px solid #e2e8f0"}});
+            tr.appendChild(h("td",{style:{padding:"4px 6px",fontWeight:"700"}},d.name));
+            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",color:"#2563eb"}},d.tClass||"—"));
+            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",fontFamily:"monospace"}},""+r4(nom+up)));
+            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",fontFamily:"monospace",fontWeight:"700",color:"#2563eb"}},""+r4(nom+(up+lo)/2)));
+            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",fontFamily:"monospace"}},""+r4(nom+lo)));
+            tbd.appendChild(tr);
+          });tbl.appendChild(tbd);prev.appendChild(tbl);
+        }catch(e){err.textContent="JSONの解析に失敗しました";err.style.display="";}
+      }},"プレビュー"),
+      h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",color:"#64748b",fontSize:"13px",fontWeight:"600"},onClick:()=>fm.remove()},"キャンセル")
+    ));
+    document.getElementById("import-btn").after(fm);
+  }},"📋 データをインポート"));
   if(!projects.length){app.appendChild(h("div",{style:{textAlign:"center",padding:"40px",color:"#94a3b8"}},"案件がまだありません"));return;}
   projects.forEach(p=>{
     const dims=p.dims||[],meas=p.meas||{};const st=dims.reduce((a,d)=>{const lv=(()=>{const ar=meas[d.id]||[];for(let i=ar.length-1;i>=0;i--)if(ar[i]!=="")return ar[i];return"";})();const j=judge(lv,d.nominal,d.upper,d.lower);if(j==="OK")a.ok++;else if(j==="NG")a.ng++;else a.none++;return a;},{ok:0,ng:0,none:0});
