@@ -67,7 +67,7 @@ function updateSummary(){
   const vals=[P.dims.length,st.ok,st.ng,st.none];
   ids.forEach((id,i)=>{const el=document.getElementById(id);if(el)el.textContent=vals[i];});
   // Update tab badge
-  const fc=P.dims.filter(d=>latest(d.id)!=="").length;
+  const fc=P.dims.filter(d=>d.inReport!==false&&latest(d.id)!=="").length;
   const tb=document.getElementById("tab-report");
   if(tb)tb.textContent="📄 ② 検査成績書"+(fc>0?` (${fc}件)`:"");
 }
@@ -183,7 +183,7 @@ function renderProject(app){
     h("div",{style:{display:"flex",alignItems:"center",gap:"12px"}},h("button",{style:{background:"none",border:"none",color:"#94a3b8",fontSize:"20px",padding:"0 4px"},onClick:()=>showList()},"←"),h("div",{},drawEl,nameEl)),
     h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},syncB,eBtn)));
 
-  const fc=P.dims.filter(d=>latest(d.id)!=="").length;
+  const fc=P.dims.filter(d=>d.inReport!==false&&latest(d.id)!=="").length;
   app.appendChild(h("div",{className:"no-print",style:{display:"flex",gap:"4px",marginBottom:"10px"}},
     h("button",{style:{flex:"1",padding:"10px",borderRadius:"8px",border:"none",background:tab==="tracker"?"#334155":"#fff",color:tab==="tracker"?"#fff":"#64748b",fontSize:"13px",fontWeight:"700",boxShadow:tab==="tracker"?"0 2px 8px rgba(0,0,0,.15)":"0 1px 2px rgba(0,0,0,.05)"},onClick:()=>{tab="tracker";render();}},"🔧 ① 追い込み加工"),
     h("button",{id:"tab-report",style:{flex:"1",padding:"10px",borderRadius:"8px",border:"none",background:tab==="report"?"#334155":"#fff",color:tab==="report"?"#fff":"#64748b",fontSize:"13px",fontWeight:"700",boxShadow:tab==="report"?"0 2px 8px rgba(0,0,0,.15)":"0 1px 2px rgba(0,0,0,.05)"},onClick:()=>{tab="report";render();}},"📄 ② 検査成績書"+(fc>0?` (${fc}件)`:""))
@@ -218,7 +218,7 @@ function renderTracker(app){
   const tw=h("div",{style:{background:"#fff",borderRadius:"10px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",overflow:"auto"}});
   const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px",minWidth:"780px"}});
   const thr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"11px",fontWeight:"600"}});
-  [{t:"種別",a:"center",w:"52px"},{t:"寸法",a:"left",w:"80px"},{t:"公差",a:"center",w:"70px"},{t:"上限 / 下限",a:"center",w:"80px"},{t:"中間値",a:"center",w:"70px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:c.a,width:c.w}},c.t)));
+  [{t:"📄",a:"center",w:"32px"},{t:"種別",a:"center",w:"52px"},{t:"寸法",a:"left",w:"80px"},{t:"公差",a:"center",w:"70px"},{t:"上限 / 下限",a:"center",w:"80px"},{t:"中間値",a:"center",w:"70px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:c.a,width:c.w}},c.t)));
   for(let i=0;i<ROUNDS;i++)thr.appendChild(h("th",{style:{padding:"7px 3px",textAlign:"center",minWidth:"85px"}},(i+1)+"回目"));
   thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"100px"}},"状態"));
   thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"44px"}},"判定"));
@@ -229,6 +229,12 @@ function renderTracker(app){
     const arr=P.meas[dim.id]||Array(ROUNDS).fill("");
     const lv=latest(dim.id);const j=judge(lv,dim.nominal,dim.upper,dim.lower);
     const tr=h("tr",{id:`row-${dim.id}`,style:{borderBottom:"1px solid #f1f5f9",background:j==="NG"?"#fef2f2":"transparent"}});
+    // Report checkbox
+    if(dim.inReport===undefined)dim.inReport=true;
+    const chk=h("input",{type:"checkbox",style:{cursor:"pointer",width:"16px",height:"16px"}});
+    chk.checked=dim.inReport;
+    chk.addEventListener("change",e=>{dim.inReport=e.target.checked;schedSave();});
+    tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},chk));
     // Type dropdown
     const typeSel=h("select",{style:{fontSize:"11px",padding:"2px 4px",border:"1px solid #d1d5db",borderRadius:"4px",fontFamily:"inherit",background:"#f8fafc",color:"#334155",cursor:"pointer"}});
     const typeColors={"穴":"#2563eb","軸":"#dc2626","距離":"#64748b"};
@@ -302,7 +308,8 @@ function renderReport(app){
   const thr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"11px"}});
   [{t:"No.",w:"36px"},{t:"種別",w:"40px"},{t:"寸法"},{t:"上限値"},{t:"下限値"},{t:"実測値"},{t:"判定",w:"50px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"8px 6px",textAlign:c.t==="寸法"?"left":"center",width:c.w||"auto"}},c.t)));
   tbl.appendChild(h("thead",{},thr));const tbd=h("tbody",{});
-  P.dims.forEach((dim,idx)=>{const lv=latest(dim.id);const j=judge(lv,dim.nominal,dim.upper,dim.lower);
+  const reportDims=P.dims.filter(d=>d.inReport!==false);
+  reportDims.forEach((dim,idx)=>{const lv=latest(dim.id);const j=judge(lv,dim.nominal,dim.upper,dim.lower);
     const r=h("tr",{style:{borderBottom:"1px solid #e2e8f0",background:j==="NG"?"#fef2f2":"transparent"}});
     r.appendChild(h("td",{style:{padding:"9px 6px",textAlign:"center",color:"#94a3b8"}},""+(idx+1)));
     const typeColors2={"穴":"#2563eb","軸":"#dc2626","距離":"#64748b"};
