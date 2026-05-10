@@ -228,7 +228,33 @@ function renderProject(app){
 
 function renderTracker(app){
   // Editor (unchanged logic, omitted for brevity - same as before)
-  if(showEditor){const ed=h("div",{style:{background:"#fff",borderRadius:"10px",padding:"16px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",marginBottom:"10px"}});ed.appendChild(h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}},h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},h("div",{style:{fontSize:"14px",fontWeight:"800"}},"寸法リスト編集"),h("button",{style:{padding:"4px 12px",borderRadius:"5px",border:"none",background:"#2563eb",color:"#fff",fontSize:"11px",fontWeight:"700"},onClick:()=>{const typeOrder={"穴":0,"軸":1,"距離":2};P.dims.sort((a,b)=>{const ta=typeOrder[a.type||"穴"]||0,tb=typeOrder[b.type||"穴"]||0;if(ta!==tb)return ta-tb;return(b.nominal||0)-(a.nominal||0);});schedSave();render();}},"自動ソート（穴→軸→距離・降順）")),h("button",{style:{padding:"4px 14px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",fontSize:"12px",fontWeight:"600",color:"#64748b"},onClick:()=>{showEditor=false;editId=null;render();}},"閉じる")));
+  if(showEditor){const ed=h("div",{style:{background:"#fff",borderRadius:"10px",padding:"16px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",marginBottom:"10px"}});ed.appendChild(h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px",flexWrap:"wrap",gap:"6px"}},h("div",{style:{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}},h("div",{style:{fontSize:"14px",fontWeight:"800"}},"寸法リスト編集"),h("button",{style:{padding:"4px 12px",borderRadius:"5px",border:"none",background:"#2563eb",color:"#fff",fontSize:"11px",fontWeight:"700"},onClick:()=>{const typeOrder={"穴":0,"軸":1,"距離":2};P.dims.sort((a,b)=>{const ta=typeOrder[a.type||"穴"]||0,tb=typeOrder[b.type||"穴"]||0;if(ta!==tb)return ta-tb;return(b.nominal||0)-(a.nominal||0);});schedSave();render();}},"自動ソート（穴→軸→距離・降順）"),h("button",{style:{padding:"4px 12px",borderRadius:"5px",border:"none",background:"#059669",color:"#fff",fontSize:"11px",fontWeight:"700"},onClick:()=>{
+    if(document.getElementById("merge-form"))return;
+    const mf=h("div",{id:"merge-form",style:{background:"#f0fdf4",border:"2px solid #86efac",borderRadius:"8px",padding:"12px",marginTop:"10px"}});
+    mf.appendChild(h("div",{style:{fontSize:"13px",fontWeight:"700",color:"#059669",marginBottom:"6px"}},"📋 追加インポート（既存データに追加）"));
+    mf.appendChild(h("div",{style:{fontSize:"11px",color:"#64748b",marginBottom:"8px"}},"JSONを貼り付けると、既存の寸法に追加されます"));
+    const ta=h("textarea",{placeholder:'ここにJSONを貼り付け...',style:{width:"100%",height:"100px",padding:"8px",fontSize:"12px",fontFamily:"'SF Mono','Consolas',monospace",border:"2px solid #e2e8f0",borderRadius:"6px",outline:"none",resize:"vertical",boxSizing:"border-box",background:"#fff"}});
+    mf.appendChild(ta);
+    const errEl=h("div",{style:{fontSize:"12px",color:"#dc2626",marginTop:"4px",display:"none"}});
+    mf.appendChild(errEl);
+    mf.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"8px"}},
+      h("button",{style:{padding:"6px 20px",borderRadius:"6px",border:"none",background:"#059669",color:"#fff",fontSize:"12px",fontWeight:"700"},onClick:()=>{
+        const raw=ta.value.trim();errEl.style.display="none";
+        try{const data=JSON.parse(raw);
+          if(!data.dims||!Array.isArray(data.dims)||data.dims.length===0){errEl.textContent="寸法データ(dims)がありません";errEl.style.display="";return;}
+          let maxId=Math.max(0,...P.dims.map(d=>d.id));
+          let added=0;
+          data.dims.forEach(d=>{if(d.nominal==null||d.upper==null||d.lower==null)return;
+            maxId++;const nm=d.name||((d.type||"穴")==="距離"?""+d.nominal:"φ"+d.nominal);
+            P.dims.push({id:maxId,name:nm,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",inReport:d.inReport!==false});
+            P.meas[maxId]=Array(ROUNDS).fill("");added++;});
+          schedSave();mf.remove();render();
+        }catch(e){errEl.textContent="JSONの解析に失敗: "+e.message;errEl.style.display="";}
+      }},"追加（"+P.dims.length+"件に追加）"),
+      h("button",{style:{padding:"6px 20px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",color:"#64748b",fontSize:"12px",fontWeight:"600"},onClick:()=>mf.remove()},"キャンセル")
+    ));
+    ed.insertBefore(mf,ed.children[1]);
+  }},"📋 追加インポート")),h("button",{style:{padding:"4px 14px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",fontSize:"12px",fontWeight:"600",color:"#64748b"},onClick:()=>{showEditor=false;editId=null;render();}},"閉じる")));
   function mkForm(isNew){const fm=_form||{tClass:"",nominal:"",upper:"",lower:"",type:"穴"};const w=h("div",{style:{background:isNew?"#f0fdf4":"#f0f9ff",border:`2px solid ${isNew?"#86efac":"#93c5fd"}`,borderRadius:"8px",padding:"10px",marginBottom:"4px"}});if(isNew)w.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"700",color:"#16a34a",marginBottom:"8px"}},"新規追加"));const fl=h("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"6px"}});
   const typeSel=h("select",{style:{width:"100%",padding:"6px",fontSize:"13px",border:"2px solid #e2e8f0",borderRadius:"5px",fontFamily:"inherit",background:"#f8fafc"}});["穴","軸","距離"].forEach(t=>{const o=h("option",{value:t},t);if(fm.type===t)o.selected=true;typeSel.appendChild(o);});typeSel.addEventListener("change",e=>{fm.type=e.target.value;_form=fm;});
   fl.appendChild(h("div",{style:{flex:"1",minWidth:"50px",maxWidth:"70px"}},h("div",{style:{fontSize:"9px",color:"#94a3b8",marginBottom:"2px"}},"種別"),typeSel));
