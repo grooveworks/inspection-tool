@@ -148,7 +148,7 @@ function renderList(app){
           // Validate dims
           for(const d of data.dims){if(!d.name||d.nominal==null||d.upper==null||d.lower==null){err.textContent="寸法データの形式が不正です（name,nominal,upper,lowerが必要）";err.style.display="";return;}}
           // Create project
-          const dims=data.dims.map((d,i)=>({id:i+1,name:d.name,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower)}));
+          const dims=data.dims.map((d,i)=>({id:i+1,name:d.name,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",toolName:d.toolName||"",jobNo:d.jobNo||""}));
           const meas={};dims.forEach(d=>meas[d.id]=Array(ROUNDS).fill(""));
           const proj={id:genId(),partName:data.partName||"",drawingNo:data.drawingNo||"",dims,meas,inspector:"",date:new Date().toISOString().split("T")[0],serial:"",createdAt:Date.now(),updatedAt:Date.now()};
           await Store.saveProject(proj);
@@ -250,7 +250,7 @@ function renderTracker(app){
               let maxId=Math.max(0,...P.dims.map(d=>d.id));
               data.dims.forEach(d=>{if(d.nominal==null||d.upper==null||d.lower==null)return;
                 maxId++;const nm=d.name||((d.type||"穴")==="距離"?""+d.nominal:"φ"+d.nominal);
-                P.dims.push({id:maxId,name:nm,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",inReport:d.inReport!==false});
+                P.dims.push({id:maxId,name:nm,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",inReport:d.inReport!==false,toolName:d.toolName||"",jobNo:d.jobNo||""});
                 P.meas[maxId]=Array(ROUNDS).fill("");});
               schedSave();mf.remove();render();
             }catch(e){errEl.textContent="JSONの解析に失敗: "+e.message;errEl.style.display="";}
@@ -265,7 +265,7 @@ function renderTracker(app){
   // Spreadsheet table
   const stbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px"}});
   const sthr=h("tr",{style:{background:"#f1f5f9",fontSize:"10px",fontWeight:"600",color:"#64748b"}});
-  [{t:"No.",w:"32px"},{t:"種別",w:"56px"},{t:"公称値",w:"72px"},{t:"公差域",w:"56px"},{t:"上偏差",w:"76px"},{t:"下偏差",w:"76px"},{t:"",w:"32px"}].forEach(c=>sthr.appendChild(h("th",{style:{padding:"5px 3px",textAlign:"center",width:c.w}},c.t)));
+  [{t:"No.",w:"30px"},{t:"種別",w:"50px"},{t:"公称値",w:"64px"},{t:"記号",w:"50px"},{t:"等級",w:"42px"},{t:"上偏差",w:"68px"},{t:"下偏差",w:"68px"},{t:"工具",w:"90px"},{t:"Job",w:"52px"},{t:"",w:"28px"}].forEach(c=>sthr.appendChild(h("th",{style:{padding:"5px 3px",textAlign:"center",width:c.w}},c.t)));
   stbl.appendChild(h("thead",{},sthr));
   const stbd=h("tbody",{});
   const inpS={width:"100%",padding:"4px 3px",fontSize:"13px",fontFamily:"'SF Mono','Consolas',monospace",textAlign:"center",border:"1px solid #d1d5db",borderRadius:"4px",outline:"none",background:"#fff",boxSizing:"border-box"};
@@ -277,7 +277,7 @@ function renderTracker(app){
     const tSel=h("select",{style:{fontSize:"11px",padding:"3px 2px",border:"1px solid #d1d5db",borderRadius:"4px",fontFamily:"inherit",background:"#fff",cursor:"pointer",fontWeight:"700",width:"100%"}});
     ["穴","軸","距離"].forEach(t=>{const o=h("option",{value:t},t);if(d.type===t)o.selected=true;tSel.appendChild(o);});
     tSel.style.color=typeColors3[d.type||"穴"]||"#334155";
-    tSel.addEventListener("change",e=>{d.type=e.target.value;d.name=(d.type==="距離"?"":"φ")+d.nominal;tSel.style.color=typeColors3[e.target.value]||"#334155";schedSave();});
+    tSel.addEventListener("change",e=>{d.type=e.target.value;d.name=(d.type==="距離"?"":"φ")+d.nominal;if(d.type==="距離"){d.tClass="";}tSel.style.color=typeColors3[e.target.value]||"#334155";schedSave();render();});
     row.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},tSel));
     // Nominal
     const nomInp=h("input",{type:"number",step:"any",value:d.nominal,style:{...inpS,fontWeight:"700"}});
@@ -285,12 +285,26 @@ function renderTracker(app){
       const res=lookupFit(d.tClass,v);if(res){d.upper=res[0];d.lower=res[1];render();}else{schedSave();render();}});
     nomInp.addEventListener("focus",e=>e.target.select());
     row.appendChild(h("td",{style:{padding:"4px 2px"}},nomInp));
-    // tClass
-    const tcInp=h("input",{type:"text",value:d.tClass||"",placeholder:"—",style:{...inpS,fontSize:"12px",textTransform:"uppercase"}});
-    tcInp.addEventListener("change",e=>{d.tClass=e.target.value.trim();
+    // Letter dropdown
+    const holeLetters=["","H","G","F","E","D","C","B","A","JS","J","K","M","N","P","R","S","T","U","X","Z","ZA","ZB","ZC"];
+    const shaftLetters=["","h","g","f","e","d","c","b","a","js","j","k","m","n","p","r","s"];
+    const curLetter=(d.tClass||"").replace(/[0-9]/g,"");
+    const curGrade=(d.tClass||"").replace(/[^0-9]/g,"");
+    const isHoleType=(d.type||"穴")!=="軸";
+    const letters=(d.type==="距離")?[""]:isHoleType?holeLetters:shaftLetters;
+    const selS={fontSize:"11px",padding:"3px 1px",border:"1px solid #d1d5db",borderRadius:"4px",fontFamily:"inherit",background:"#fff",cursor:"pointer",width:"100%"};
+    const ltSel=h("select",{style:selS});
+    letters.forEach(l=>{const o=h("option",{value:l},l||"—");if(l===curLetter)o.selected=true;ltSel.appendChild(o);});
+    ltSel.addEventListener("change",e=>{const g=grSel.value;d.tClass=e.target.value+(g||"");
       const res=lookupFit(d.tClass,d.nominal);if(res){d.upper=res[0];d.lower=res[1];}schedSave();render();});
-    tcInp.addEventListener("focus",e=>e.target.select());
-    row.appendChild(h("td",{style:{padding:"4px 2px"}},tcInp));
+    row.appendChild(h("td",{style:{padding:"4px 1px"}},ltSel));
+    // Grade dropdown
+    const grSel=h("select",{style:selS});
+    const grades=(d.type==="距離")?[""]:["","5","6","7","8","9","10","11"];
+    grades.forEach(g=>{const o=h("option",{value:g},g||"—");if(g===curGrade)o.selected=true;grSel.appendChild(o);});
+    grSel.addEventListener("change",e=>{const l=ltSel.value;d.tClass=l+(e.target.value||"");
+      const res=lookupFit(d.tClass,d.nominal);if(res){d.upper=res[0];d.lower=res[1];}schedSave();render();});
+    row.appendChild(h("td",{style:{padding:"4px 1px"}},grSel));
     // Upper deviation
     const upInp=h("input",{type:"number",step:"any",value:d.upper,style:{...inpS,color:"#16a34a"}});
     upInp.addEventListener("change",e=>{const v=parseFloat(e.target.value);if(!isNaN(v)){d.upper=v;schedSave();}});
@@ -301,6 +315,14 @@ function renderTracker(app){
     loInp.addEventListener("change",e=>{const v=parseFloat(e.target.value);if(!isNaN(v)){d.lower=v;schedSave();}});
     loInp.addEventListener("focus",e=>e.target.select());
     row.appendChild(h("td",{style:{padding:"4px 2px"}},loInp));
+    // Tool name
+    const toolInp=h("input",{type:"text",value:d.toolName||"",placeholder:"—",style:{...inpS,fontFamily:"inherit",fontSize:"11px",textAlign:"left"}});
+    toolInp.addEventListener("change",e=>{d.toolName=e.target.value.trim();schedSave();});
+    row.appendChild(h("td",{style:{padding:"4px 2px"}},toolInp));
+    // Job No.
+    const jobInp=h("input",{type:"text",value:d.jobNo||"",placeholder:"—",style:{...inpS,fontSize:"11px"}});
+    jobInp.addEventListener("change",e=>{d.jobNo=e.target.value.trim();schedSave();});
+    row.appendChild(h("td",{style:{padding:"4px 2px"}},jobInp));
     // Delete
     row.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},h("button",{style:{padding:"2px 6px",borderRadius:"4px",border:"1px solid #fca5a5",background:"#fff",fontSize:"11px",color:"#dc2626",cursor:"pointer",lineHeight:"1"},onClick:()=>{if(!confirm((idx+1)+". "+dName(d)+" を削除？"))return;P.dims=P.dims.filter(x=>x.id!==d.id);delete P.meas[d.id];schedSave();render();}},"×")));
     stbd.appendChild(row);
@@ -310,7 +332,7 @@ function renderTracker(app){
   // Add new row
   ed.appendChild(h("button",{style:{width:"100%",padding:"8px",borderRadius:"6px",border:"2px dashed #d1d5db",background:"transparent",fontSize:"13px",fontWeight:"600",color:"#64748b",marginTop:"8px"},onClick:()=>{
     const nid=Math.max(0,...P.dims.map(d=>d.id))+1;
-    P.dims.push({id:nid,name:"φ0",tClass:"",nominal:0,upper:0,lower:0,type:"穴",inReport:true});
+    P.dims.push({id:nid,name:"φ0",tClass:"",nominal:0,upper:0,lower:0,type:"穴",inReport:true,toolName:"",jobNo:""});
     P.meas[nid]=Array(ROUNDS).fill("");schedSave();render();
   }},"＋ 寸法を追加"));
   app.appendChild(ed);}
@@ -364,6 +386,8 @@ function renderTracker(app){
     tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},typeSel));
     const ntd=h("td",{style:{padding:"7px 6px"}},h("span",{style:{fontWeight:"800",fontSize:"14px"}},dim.name));
     if(dim.tClass)ntd.appendChild(h("span",{style:{fontSize:"9px",fontWeight:"700",background:"#dbeafe",color:"#1d4ed8",padding:"1px 4px",borderRadius:"3px",marginLeft:"4px",display:"inline-block"}},dim.tClass));
+    const tjParts=[];if(dim.toolName)tjParts.push("T: "+dim.toolName);if(dim.jobNo)tjParts.push("J: "+dim.jobNo);
+    if(tjParts.length)ntd.appendChild(h("div",{style:{fontSize:"10px",color:"#94a3b8",marginTop:"2px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},tjParts.join(" / ")));
     tr.appendChild(ntd);
     tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",lineHeight:"1.6"}},
       h("div",{style:{color:"#16a34a",fontWeight:"600"}},fmtTol(dim.upper)),
