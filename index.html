@@ -6,7 +6,7 @@
 <title>寸法検査ツール</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}body{font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif;background:#f1f5f9;min-height:100vh;padding:12px;color:#334155}input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}input[type=number]{-moz-appearance:textfield}button{font-family:inherit;cursor:pointer}
-.ed-row:hover{background:#e0f2fe!important}
+.ed-row:hover{background:#bfdbfe!important}
 .ed-row td{transition:background .15s}
 .ed-input:focus,.ed-select:focus{outline:2px solid #3b82f6!important;outline-offset:1px;border-color:#3b82f6!important}
 @media print{.no-print{display:none!important}.print-area{box-shadow:none!important;border-radius:0!important}body{background:#fff;padding:0}}
@@ -26,6 +26,7 @@ const Store={
   async getProject(id){if(useFB){try{const d=await db.collection("projects").doc(id).get();if(d.exists)return{id:d.id,...d.data()};}catch(e){console.error(e);}}const list=JSON.parse(localStorage.getItem("_projects")||"[]");return list.find(x=>x.id===id)||null;},
   onProjectSync(id,cb){if(useFB)return db.collection("projects").doc(id).onSnapshot(doc=>{if(doc.exists)cb({id:doc.id,...doc.data()});});return null;}
 };
+const VER="v1.1.0";
 const ROUNDS=5,r4=v=>Math.round(v*10000)/10000;
 const PRESET=[{id:1,name:"φ6",tClass:"H8",nominal:6,upper:.018,lower:0},{id:2,name:"φ47",tClass:"P7",nominal:47,upper:-.017,lower:-.042},{id:3,name:"φ103",tClass:"H7",nominal:103,upper:.035,lower:0},{id:4,name:"φ143",tClass:"H7",nominal:143,upper:.04,lower:0},{id:5,name:"φ60",tClass:"",nominal:60,upper:-.02,lower:-.041},{id:6,name:"φ130.5",tClass:"",nominal:130.5,upper:.25,lower:.05},{id:7,name:"φ136.5",tClass:"",nominal:136.5,upper:.15,lower:.05},{id:8,name:"φ138.5",tClass:"",nominal:138.5,upper:.25,lower:.05}];
 let view="list",projects=[],P=null,unsub=null,tab="tracker",showEditor=false,editId=null,_form=null,saveTimer=null;
@@ -114,7 +115,7 @@ function updateSummary(){
 // ═══ LIST ═══
 async function showList(){view="list";if(unsub){unsub();unsub=null;}P=null;projects=await Store.listProjects();render();}
 function renderList(app){
-  app.appendChild(h("div",{style:{background:"#1e293b",borderRadius:"10px",padding:"16px 20px",marginBottom:"16px",color:"#fff"}},h("div",{style:{fontSize:"10px",letterSpacing:"3px",color:"#f59e0b",fontWeight:"700",marginBottom:"4px"}},"INSPECTION TOOL"),h("div",{style:{fontSize:"22px",fontWeight:"800"}},"案件一覧"),h("div",{style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px"}},useFB?"☁ Firebase同期中":"📱 ローカル保存")));
+  app.appendChild(h("div",{style:{background:"#1e293b",borderRadius:"10px",padding:"16px 20px",marginBottom:"16px",color:"#fff"}},h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}},h("div",{style:{fontSize:"10px",letterSpacing:"3px",color:"#f59e0b",fontWeight:"700"}},"INSPECTION TOOL"),h("div",{style:{fontSize:"10px",color:"#94a3b8",fontFamily:"'SF Mono','Consolas',monospace"}},VER)),h("div",{style:{fontSize:"22px",fontWeight:"800"}},"案件一覧"),h("div",{style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px"}},useFB?"☁ Firebase同期中":"📱 ローカル保存")));
   app.appendChild(h("button",{id:"add-btn",style:{width:"100%",padding:"14px",borderRadius:"10px",border:"2px dashed #94a3b8",background:"transparent",fontSize:"14px",fontWeight:"700",color:"#64748b",marginBottom:"16px"},onClick:()=>{
     if(document.getElementById("new-form"))return;
     const fm=h("div",{id:"new-form",style:{background:"#f0fdf4",border:"2px solid #86efac",borderRadius:"10px",padding:"16px",marginBottom:"16px"}});
@@ -220,7 +221,7 @@ function renderProject(app){
 
   app.appendChild(h("div",{className:"no-print",style:{background:"#1e293b",borderRadius:"10px",padding:"12px 16px",marginBottom:"10px",color:"#fff",display:"flex",justifyContent:"space-between",alignItems:"center"}},
     h("div",{style:{display:"flex",alignItems:"center",gap:"12px"}},h("button",{style:{background:"none",border:"none",color:"#94a3b8",fontSize:"20px",padding:"0 4px"},onClick:()=>showList()},"←"),h("div",{},drawEl,nameEl)),
-    h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},syncB,eBtn)));
+    h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},h("span",{style:{fontSize:"10px",color:"#64748b",fontFamily:"'SF Mono','Consolas',monospace"}},VER),syncB,eBtn)));
 
   const fc=P.dims.filter(d=>d.inReport!==false&&latest(d.id)!=="").length;
   app.appendChild(h("div",{className:"no-print",style:{display:"flex",gap:"4px",marginBottom:"10px"}},
@@ -274,7 +275,7 @@ function renderTracker(app){
   const stbd=h("tbody",{});
   const inpS={width:"100%",padding:"8px 4px",fontSize:"13px",fontFamily:"'SF Mono','Consolas',monospace",textAlign:"center",border:"1px solid #cbd5e1",borderRadius:"5px",outline:"none",background:"#fff",boxSizing:"border-box",minHeight:"38px",color:"#1e293b"};
   P.dims.forEach((d,idx)=>{
-    const row=h("tr",{className:"ed-row",style:{borderBottom:"1px solid #e2e8f0",background:idx%2===0?"#fff":"#f8fafc"}});
+    const row=h("tr",{className:"ed-row",style:{borderBottom:"1px solid #e2e8f0",background:idx%2===0?"#ffffff":"#e2e8f0"}});
     row.appendChild(h("td",{style:{padding:"8px 4px",textAlign:"center",fontSize:"12px",color:"#64748b",fontWeight:"600"}},(idx+1)+"."));
     // Type dropdown
     const typeColors3={"穴":"#2563eb","軸":"#dc2626","距離":"#64748b"};
