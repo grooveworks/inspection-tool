@@ -26,7 +26,7 @@ const Store={
   async getProject(id){if(useFB){try{const d=await db.collection("projects").doc(id).get();if(d.exists)return{id:d.id,...d.data()};}catch(e){console.error(e);}}const list=JSON.parse(localStorage.getItem("_projects")||"[]");return list.find(x=>x.id===id)||null;},
   onProjectSync(id,cb){if(useFB)return db.collection("projects").doc(id).onSnapshot(doc=>{if(doc.exists)cb({id:doc.id,...doc.data()});});return null;}
 };
-const VER="v1.2.1";
+const VER="v1.3.0";
 const ROUNDS=5,r4=v=>Math.round(v*10000)/10000;
 const PRESET=[{id:1,name:"φ6",tClass:"H8",nominal:6,upper:.018,lower:0},{id:2,name:"φ47",tClass:"P7",nominal:47,upper:-.017,lower:-.042},{id:3,name:"φ103",tClass:"H7",nominal:103,upper:.035,lower:0},{id:4,name:"φ143",tClass:"H7",nominal:143,upper:.04,lower:0},{id:5,name:"φ60",tClass:"",nominal:60,upper:-.02,lower:-.041},{id:6,name:"φ130.5",tClass:"",nominal:130.5,upper:.25,lower:.05},{id:7,name:"φ136.5",tClass:"",nominal:136.5,upper:.15,lower:.05},{id:8,name:"φ138.5",tClass:"",nominal:138.5,upper:.25,lower:.05}];
 let view="list",projects=[],P=null,unsub=null,tab="tracker",showEditor=false,editId=null,_form=null,saveTimer=null;
@@ -165,7 +165,7 @@ function renderList(app){
           // Validate dims
           for(const d of data.dims){if(!d.name||d.nominal==null||d.upper==null||d.lower==null){err.textContent="寸法データの形式が不正です（name,nominal,upper,lowerが必要）";err.style.display="";return;}}
           // Create project
-          const dims=data.dims.map((d,i)=>({id:i+1,name:d.name,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",method:d.method||"",toolNo:d.toolNo||"",jobNo:d.jobNo||""}));
+          const dims=data.dims.map((d,i)=>({id:i+1,name:d.name,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",qty:parseInt(d.qty,10)>1?parseInt(d.qty,10):1,method:d.method||"",toolNo:d.toolNo||"",jobNo:d.jobNo||""}));
           const meas={};dims.forEach(d=>meas[d.id]=Array(ROUNDS).fill(""));
           const proj={id:genId(),partName:data.partName||"",drawingNo:data.drawingNo||"",dims,meas,inspector:"",date:new Date().toISOString().split("T")[0],serial:"",createdAt:Date.now(),updatedAt:Date.now()};
           await Store.saveProject(proj);
@@ -267,7 +267,7 @@ function renderTracker(app){
               let maxId=Math.max(0,...P.dims.map(d=>d.id));
               data.dims.forEach(d=>{if(d.nominal==null||d.upper==null||d.lower==null)return;
                 maxId++;const nm=d.name||((d.type||"穴")==="距離"?""+d.nominal:"φ"+d.nominal);
-                P.dims.push({id:maxId,name:nm,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",inReport:d.inReport!==false,method:d.method||"",toolNo:d.toolNo||"",jobNo:d.jobNo||""});
+                P.dims.push({id:maxId,name:nm,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",qty:parseInt(d.qty,10)>1?parseInt(d.qty,10):1,inReport:d.inReport!==false,method:d.method||"",toolNo:d.toolNo||"",jobNo:d.jobNo||""});
                 P.meas[maxId]=Array(ROUNDS).fill("");});
               schedSave();mf.remove();render();
             }catch(e){errEl.textContent="JSONの解析に失敗: "+e.message;errEl.style.display="";}
@@ -282,7 +282,7 @@ function renderTracker(app){
   // Spreadsheet table
   const stbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px",borderSpacing:"0"}});
   const sthr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"10px",fontWeight:"600",position:"sticky",top:"0",zIndex:"1"}});
-  [{t:"No.",w:"28px"},{t:"種別",w:"48px"},{t:"公称値",w:"60px"},{t:"記号",w:"48px"},{t:"等級",w:"40px"},{t:"上偏差",w:"64px"},{t:"下偏差",w:"64px"},{t:"加工方法",w:"72px"},{t:"工具No.",w:"64px"},{t:"Job",w:"50px"},{t:"",w:"28px"}].forEach(c=>sthr.appendChild(h("th",{style:{padding:"8px 4px",textAlign:"center",width:c.w}},c.t)));
+  [{t:"No.",w:"28px"},{t:"種別",w:"48px"},{t:"公称値",w:"60px"},{t:"記号",w:"48px"},{t:"等級",w:"40px"},{t:"個数",w:"48px"},{t:"上偏差",w:"64px"},{t:"下偏差",w:"64px"},{t:"加工方法",w:"72px"},{t:"工具No.",w:"64px"},{t:"Job",w:"50px"},{t:"",w:"28px"}].forEach(c=>sthr.appendChild(h("th",{style:{padding:"8px 4px",textAlign:"center",width:c.w}},c.t)));
   stbl.appendChild(h("thead",{},sthr));
   const stbd=h("tbody",{});
   const inpS={width:"100%",padding:"8px 4px",fontSize:"13px",fontFamily:"'SF Mono','Consolas',monospace",textAlign:"center",border:"1px solid #cbd5e1",borderRadius:"5px",outline:"none",background:"#fff",boxSizing:"border-box",minHeight:"38px",color:"#1e293b"};
@@ -322,6 +322,11 @@ function renderTracker(app){
     grSel.addEventListener("change",e=>{const l=ltSel.value;d.tClass=l+(e.target.value||"");
       const res=lookupFit(d.tClass,d.nominal);if(res){d.upper=res[0];d.lower=res[1];}schedSave();render();});
     row.appendChild(h("td",{style:{padding:"8px 4px"}},grSel));
+    // Qty
+    const qtyInp=h("input",{type:"number",min:"1",step:"1",value:(d.qty&&d.qty>1)?d.qty:"",placeholder:"1",className:"ed-input",style:{...inpS,fontSize:"12px",textAlign:"center"}});
+    qtyInp.addEventListener("change",e=>{const v=parseInt(e.target.value,10);d.qty=(!isNaN(v)&&v>1)?v:1;schedSave();render();});
+    qtyInp.addEventListener("focus",e=>e.target.select());
+    row.appendChild(h("td",{style:{padding:"8px 4px"}},qtyInp));
     // Upper deviation
     const upInp=h("input",{type:"number",step:"any",value:d.upper,className:"ed-input",style:{...inpS,color:"#15803d"}});
     upInp.addEventListener("change",e=>{const v=parseFloat(e.target.value);if(!isNaN(v)){d.upper=v;schedSave();}});
@@ -356,7 +361,7 @@ function renderTracker(app){
   // Add new row
   ed.appendChild(h("button",{style:{width:"100%",padding:"8px",borderRadius:"6px",border:"2px dashed #d1d5db",background:"transparent",fontSize:"13px",fontWeight:"600",color:"#64748b",marginTop:"8px"},onClick:()=>{
     const nid=Math.max(0,...P.dims.map(d=>d.id))+1;
-    P.dims.push({id:nid,name:"φ0",tClass:"",nominal:0,upper:0,lower:0,type:"穴",inReport:true,method:"",toolNo:"",jobNo:""});
+    P.dims.push({id:nid,name:"φ0",tClass:"",nominal:0,upper:0,lower:0,type:"穴",qty:1,inReport:true,method:"",toolNo:"",jobNo:""});
     P.meas[nid]=Array(ROUNDS).fill("");schedSave();render();
   }},"＋ 寸法を追加"));
   app.appendChild(ed);}
@@ -409,9 +414,10 @@ function renderTracker(app){
     typeSel.addEventListener("change",e=>{dim.type=e.target.value;typeSel.style.color=typeColors[e.target.value]||"#334155";schedSave();});
     tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},typeSel));
     const ntd=h("td",{style:{padding:"7px 6px"}},h("span",{style:{fontWeight:"800",fontSize:"14px"}},dim.name));
-    if(dim.tClass)ntd.appendChild(h("span",{style:{fontSize:"9px",fontWeight:"700",background:"#dbeafe",color:"#1d4ed8",padding:"1px 4px",borderRadius:"3px",marginLeft:"4px",display:"inline-block"}},dim.tClass));
+    if(dim.tClass)ntd.appendChild(h("span",{style:{fontSize:"14px",fontWeight:"700",background:"#dbeafe",color:"#1d4ed8",padding:"2px 7px",borderRadius:"4px",marginLeft:"5px",display:"inline-block"}},dim.tClass));
+    if(dim.qty&&dim.qty>1)ntd.appendChild(h("span",{style:{fontSize:"13px",fontWeight:"700",background:"#f1f5f9",color:"#475569",border:"1px solid #cbd5e1",padding:"2px 7px",borderRadius:"4px",marginLeft:"5px",display:"inline-block"}},"×"+dim.qty));
     const tjParts=[];if(dim.method)tjParts.push(dim.method);if(dim.toolNo)tjParts.push(dim.toolNo);if(dim.jobNo)tjParts.push("J:"+dim.jobNo);
-    if(tjParts.length)ntd.appendChild(h("div",{style:{fontSize:"10px",color:"#94a3b8",marginTop:"2px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},tjParts.join(" / ")));
+    if(tjParts.length)ntd.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"600",color:"#475569",marginTop:"3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},tjParts.join(" / ")));
     tr.appendChild(ntd);
     tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",lineHeight:"1.6"}},
       h("div",{style:{color:"#16a34a",fontWeight:"600"}},fmtTol(dim.upper)),
