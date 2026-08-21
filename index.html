@@ -386,7 +386,7 @@ function renderTracker(app){
   const tw=h("div",{style:{background:"#fff",borderRadius:"10px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",overflow:"auto"}});
   const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px",minWidth:"780px"}});
   const thr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"11px",fontWeight:"600"}});
-  [{t:"📄",a:"center",w:"32px"},{t:"種別",a:"center",w:"52px"},{t:"寸法",a:"left",w:"80px"},{t:"公差",a:"center",w:"70px"},{t:"上限 / 下限",a:"center",w:"80px"},{t:"中間値",a:"center",w:"70px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:c.a,width:c.w}},c.t)));
+  [{t:"📄",a:"center",w:"32px"},{t:"種別",a:"center",w:"52px"},{t:"寸法",a:"left",w:"150px"},{t:"公差",a:"center",w:"70px"},{t:"上限 / 下限",a:"center",w:"80px"},{t:"中間値",a:"center",w:"70px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:c.a,width:c.w}},c.t)));
   for(let i=0;i<ROUNDS;i++)thr.appendChild(h("th",{style:{padding:"7px 3px",textAlign:"center",minWidth:"85px"}},(i+1)+"回目"));
   thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"100px"}},"状態"));
   thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"44px"}},"判定"));
@@ -413,9 +413,9 @@ function renderTracker(app){
     typeSel.style.fontWeight="700";
     typeSel.addEventListener("change",e=>{dim.type=e.target.value;typeSel.style.color=typeColors[e.target.value]||"#334155";schedSave();});
     tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},typeSel));
-    const ntd=h("td",{style:{padding:"7px 6px"}},h("span",{style:{fontWeight:"800",fontSize:"14px"}},dim.name));
-    if(dim.tClass)ntd.appendChild(h("span",{style:{fontSize:"14px",fontWeight:"700",background:"#dbeafe",color:"#1d4ed8",padding:"2px 7px",borderRadius:"4px",marginLeft:"5px",display:"inline-block"}},dim.tClass));
-    if(dim.qty&&dim.qty>1)ntd.appendChild(h("span",{style:{fontSize:"13px",fontWeight:"700",background:"#f1f5f9",color:"#475569",border:"1px solid #cbd5e1",padding:"2px 7px",borderRadius:"4px",marginLeft:"5px",display:"inline-block"}},"×"+dim.qty));
+    const ntd=h("td",{style:{padding:"7px 6px",whiteSpace:"nowrap"}},h("span",{style:{fontWeight:"800",fontSize:"15px",verticalAlign:"middle"}},dim.name));
+    if(dim.tClass)ntd.appendChild(h("span",{style:{fontSize:"14px",fontWeight:"700",background:"#dbeafe",color:"#1d4ed8",padding:"1px 6px",borderRadius:"4px",marginLeft:"5px",display:"inline-block",verticalAlign:"middle"}},dim.tClass));
+    if(dim.qty&&dim.qty>1)ntd.appendChild(h("span",{style:{fontSize:"13px",fontWeight:"700",background:"#f1f5f9",color:"#475569",border:"1px solid #cbd5e1",padding:"1px 6px",borderRadius:"4px",marginLeft:"5px",display:"inline-block",verticalAlign:"middle"}},"×"+dim.qty));
     const tjParts=[];if(dim.method)tjParts.push(dim.method);if(dim.toolNo)tjParts.push(dim.toolNo);if(dim.jobNo)tjParts.push("J:"+dim.jobNo);
     if(tjParts.length)ntd.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"600",color:"#475569",marginTop:"3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},tjParts.join(" / ")));
     tr.appendChild(ntd);
