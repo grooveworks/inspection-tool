@@ -26,8 +26,14 @@ const Store={
   async getProject(id){if(useFB){try{const d=await db.collection("projects").doc(id).get();if(d.exists)return{id:d.id,...d.data()};}catch(e){console.error(e);}}const list=JSON.parse(localStorage.getItem("_projects")||"[]");return list.find(x=>x.id===id)||null;},
   onProjectSync(id,cb){if(useFB)return db.collection("projects").doc(id).onSnapshot(doc=>{if(doc.exists)cb({id:doc.id,...doc.data()});});return null;}
 };
-const VER="v1.3.0";
+const VER="v1.3.2";
 const ROUNDS=5,r4=v=>Math.round(v*10000)/10000;
+const RN=()=>{const n=P&&parseInt(P.rounds,10);return (!isNaN(n)&&n>=1&&n<=200)?n:ROUNDS;};
+// 左固定列の累積オフセット（📄/種別/寸法/公差/上限下限/中間値）
+const LCOL=[32,52,150,70,80,70];
+const LOFF=LCOL.reduce((a,w,i)=>(a.push(i?a[i-1]+LCOL[i-1]:0),a),[]);
+const stickL=(i,bg,z)=>({position:"sticky",left:LOFF[i]+"px",background:bg,zIndex:String(z||2)});
+const stickR=(right,bg,z)=>({position:"sticky",right:right+"px",background:bg,zIndex:String(z||2)});
 const PRESET=[{id:1,name:"φ6",tClass:"H8",nominal:6,upper:.018,lower:0},{id:2,name:"φ47",tClass:"P7",nominal:47,upper:-.017,lower:-.042},{id:3,name:"φ103",tClass:"H7",nominal:103,upper:.035,lower:0},{id:4,name:"φ143",tClass:"H7",nominal:143,upper:.04,lower:0},{id:5,name:"φ60",tClass:"",nominal:60,upper:-.02,lower:-.041},{id:6,name:"φ130.5",tClass:"",nominal:130.5,upper:.25,lower:.05},{id:7,name:"φ136.5",tClass:"",nominal:136.5,upper:.15,lower:.05},{id:8,name:"φ138.5",tClass:"",nominal:138.5,upper:.25,lower:.05}];
 let view="list",projects=[],P=null,unsub=null,tab="tracker",showEditor=false,editId=null,_form=null,saveTimer=null;
 function judge(v,nom,up,lo){if(!v||v==="")return null;const n=parseFloat(v);if(isNaN(n))return null;const d=r4(n-nom);return d>=r4(lo)&&d<=r4(up)?"OK":"NG";}
@@ -109,7 +115,8 @@ function updateRowUI(dimId){
   if(jEl){jEl.innerHTML="";if(j)jEl.appendChild(h("div",{style:{display:"inline-block",padding:"2px 8px",borderRadius:"4px",fontWeight:"800",fontSize:"12px",color:"#fff",background:j==="OK"?"#16a34a":"#dc2626"}},j));}
   // Update row bg
   const row=document.getElementById(`row-${dimId}`);
-  if(row)row.style.background=j==="NG"?"#fef2f2":"transparent";
+  if(row){const bg=j==="NG"?"#fef2f2":"#fff";row.style.background=bg;
+    [...row.children].forEach(td=>{if(td.style.position==="sticky")td.style.background=(td.style.color==="rgb(37, 99, 235)"&&j!=="NG")?"#eff6ff":bg;});}
   // Update summary
   updateSummary();
 }
@@ -211,11 +218,25 @@ function renderList(app){
     const sCol={未設定:"#94a3b8",NG有り:"#dc2626",完了:"#16a34a",進行中:"#d97706",未着手:"#64748b"}[status];const sBg={未設定:"#f1f5f9",NG有り:"#fee2e2",完了:"#dcfce7",進行中:"#fef3c7",未着手:"#f1f5f9"}[status];
     app.appendChild(h("div",{style:{background:"#fff",borderRadius:"10px",padding:"16px",marginBottom:"8px",boxShadow:"0 1px 3px rgba(0,0,0,.06)",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:"1px solid #e2e8f0"},onClick:()=>openProject(p.id)},
       h("div",{},h("div",{style:{fontWeight:"800",fontSize:"16px",marginBottom:"4px"}},p.partName||"（品名未設定）"),h("div",{style:{fontSize:"12px",color:"#64748b",marginBottom:"2px"}},"図番: "+(p.drawingNo||"—")),h("div",{style:{fontSize:"11px",color:"#94a3b8"}},(p.date||"")+"　"+total+"項目")),
-      h("div",{style:{display:"flex",alignItems:"center",gap:"10px"}},h("div",{style:{textAlign:"right"}},h("div",{style:{fontSize:"12px",fontWeight:"700",color:sCol,background:sBg,padding:"3px 10px",borderRadius:"12px",display:"inline-block",marginBottom:"4px"}},status),total>0?h("div",{style:{fontSize:"11px",color:"#94a3b8"}},done+"/"+total):null),h("button",{style:{padding:"4px 8px",borderRadius:"4px",border:"1px solid #fca5a5",background:"#fff",fontSize:"10px",color:"#dc2626"},onClick:e=>{e.stopPropagation();if(confirm("削除しますか？")){Store.deleteProject(p.id);showList();}}},"削除"))
+      h("div",{style:{display:"flex",alignItems:"center",gap:"10px"}},h("button",{title:"この案件を複製（測定値は空）",style:{padding:"6px 10px",borderRadius:"7px",border:"1px solid #cbd5e1",background:"#f8fafc",color:"#475569",fontSize:"15px",fontWeight:"700",cursor:"pointer",lineHeight:"1"},onClick:async e=>{e.stopPropagation();if(!confirm("「"+(p.partName||"")+"」を複製します。\n寸法・公差・加工方法は引き継ぎ、測定値は空になります。"))return;await duplicateProject(p);}},"⧉"),h("div",{style:{textAlign:"right"}},h("div",{style:{fontSize:"12px",fontWeight:"700",color:sCol,background:sBg,padding:"3px 10px",borderRadius:"12px",display:"inline-block",marginBottom:"4px"}},status),total>0?h("div",{style:{fontSize:"11px",color:"#94a3b8"}},done+"/"+total):null),h("button",{style:{padding:"4px 8px",borderRadius:"4px",border:"1px solid #fca5a5",background:"#fff",fontSize:"10px",color:"#dc2626"},onClick:e=>{e.stopPropagation();if(confirm("削除しますか？")){Store.deleteProject(p.id);showList();}}},"削除"))
     ));
   });
 }
-async function openProject(id){const p=await Store.getProject(id);if(!p)return;P=p;if(!P.meas)P.meas={};if(!P.dims)P.dims=[];P.dims.forEach(d=>{if(!P.meas[d.id])P.meas[d.id]=Array(ROUNDS).fill("");});view="project";tab="tracker";showEditor=false;editId=null;_form=null;if(unsub){unsub();unsub=null;}unsub=Store.onProjectSync(id,data=>{if(data&&data.updatedAt>(P.updatedAt||0)+2000){Object.assign(P,data);if(!P.meas)P.meas={};P.dims.forEach(d=>{if(!P.meas[d.id])P.meas[d.id]=Array(ROUNDS).fill("");});render();}});render();}
+async function duplicateProject(src){
+  const base=(src.partName||"（品名未設定）").replace(/\s*\(\d+\)$/,"");
+  let n=2;const names=new Set(projects.map(x=>x.partName||""));
+  while(names.has(base+" ("+n+")"))n++;
+  const rounds=parseInt(src.rounds,10)||ROUNDS;
+  const dims=(src.dims||[]).map(d=>({...d}));
+  const meas={};dims.forEach(d=>meas[d.id]=Array(rounds).fill(""));
+  const np={id:Date.now().toString(36)+Math.random().toString(36).slice(2,7),
+    partName:base+" ("+n+")",drawingNo:src.drawingNo||"",rounds:rounds,
+    date:new Date().toISOString().slice(0,10),inspector:"",serial:"",
+    dims:dims,meas:meas,updatedAt:Date.now()};
+  await Store.saveProject(np);
+  projects=await Store.listProjects();render();
+}
+async function openProject(id){const p=await Store.getProject(id);if(!p)return;P=p;if(!P.meas)P.meas={};if(!P.dims)P.dims=[];P.dims.forEach(d=>{const n=parseInt(P.rounds,10)||ROUNDS;const a=P.meas[d.id]||[];const b=Array(n).fill("");for(let i=0;i<Math.min(n,a.length);i++)b[i]=a[i];P.meas[d.id]=b;});view="project";tab="tracker";showEditor=false;editId=null;_form=null;if(unsub){unsub();unsub=null;}unsub=Store.onProjectSync(id,data=>{if(data&&data.updatedAt>(P.updatedAt||0)+2000){Object.assign(P,data);if(!P.meas)P.meas={};P.dims.forEach(d=>{const n=parseInt(P.rounds,10)||ROUNDS;const a=P.meas[d.id]||[];const b=Array(n).fill("");for(let i=0;i<Math.min(n,a.length);i++)b[i]=a[i];P.meas[d.id]=b;});render();}});render();}
 
 // ═══ PROJECT ═══
 function renderProject(app){
@@ -268,7 +289,7 @@ function renderTracker(app){
               data.dims.forEach(d=>{if(d.nominal==null||d.upper==null||d.lower==null)return;
                 maxId++;const nm=d.name||((d.type||"穴")==="距離"?""+d.nominal:"φ"+d.nominal);
                 P.dims.push({id:maxId,name:nm,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",qty:parseInt(d.qty,10)>1?parseInt(d.qty,10):1,inReport:d.inReport!==false,method:d.method||"",toolNo:d.toolNo||"",jobNo:d.jobNo||""});
-                P.meas[maxId]=Array(ROUNDS).fill("");});
+                P.meas[maxId]=Array(RN()).fill("");});
               schedSave();mf.remove();render();
             }catch(e){errEl.textContent="JSONの解析に失敗: "+e.message;errEl.style.display="";}
           }},"追加（"+P.dims.length+"件に追加）"),
@@ -362,18 +383,25 @@ function renderTracker(app){
   ed.appendChild(h("button",{style:{width:"100%",padding:"8px",borderRadius:"6px",border:"2px dashed #d1d5db",background:"transparent",fontSize:"13px",fontWeight:"600",color:"#64748b",marginTop:"8px"},onClick:()=>{
     const nid=Math.max(0,...P.dims.map(d=>d.id))+1;
     P.dims.push({id:nid,name:"φ0",tClass:"",nominal:0,upper:0,lower:0,type:"穴",qty:1,inReport:true,method:"",toolNo:"",jobNo:""});
-    P.meas[nid]=Array(ROUNDS).fill("");schedSave();render();
+    P.meas[nid]=Array(RN()).fill("");schedSave();render();
   }},"＋ 寸法を追加"));
   app.appendChild(ed);}
 
   // Info row
-  const info=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"10px"}});
+  const info=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 120px",gap:"8px",marginBottom:"10px"}});
   [{l:"加工日",k:"date",t:"date"},{l:"作業者",k:"inspector",t:"text",p:"氏名"},{l:"S/N",k:"serial",t:"text",p:"シリアルNo."}].forEach(f=>{
     const inp=h("input",{type:f.t,value:P[f.k]||"",placeholder:f.p||"",style:{width:"100%",border:"none",borderBottom:"2px solid #e2e8f0",fontSize:"14px",padding:"2px 0",outline:"none",background:"transparent",fontFamily:"inherit",color:"#334155",boxSizing:"border-box"}});
     // NO render on input - just save
     inp.addEventListener("input",e=>{P[f.k]=e.target.value;schedSave();});
     info.appendChild(h("div",{style:{background:"#fff",borderRadius:"8px",padding:"8px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.05)"}},h("div",{style:{fontSize:"10px",color:"#94a3b8",fontWeight:"600",marginBottom:"2px"}},f.l),inp));
-  });app.appendChild(info);
+  });
+  {const rInp=h("input",{type:"number",min:"1",max:"200",step:"1",value:RN(),style:{width:"100%",border:"none",borderBottom:"2px solid #e2e8f0",fontSize:"14px",padding:"2px 0",outline:"none",background:"transparent",fontFamily:"inherit",color:"#334155",boxSizing:"border-box",fontWeight:"700"}});
+   rInp.addEventListener("change",e=>{let n=parseInt(e.target.value,10);if(isNaN(n)||n<1)n=1;if(n>200)n=200;
+     P.rounds=n;P.dims.forEach(d=>{const a=P.meas[d.id]||[];const b=Array(n).fill("");for(let i=0;i<Math.min(n,a.length);i++)b[i]=a[i];P.meas[d.id]=b;});
+     schedSave();render();});
+   rInp.addEventListener("focus",e=>e.target.select());
+   info.appendChild(h("div",{style:{background:"#fff",borderRadius:"8px",padding:"8px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.05)"}},h("div",{style:{fontSize:"10px",color:"#94a3b8",fontWeight:"600",marginBottom:"2px"}},"測定数"),rInp));}
+  app.appendChild(info);
 
   // Summary
   const st=P.dims.reduce((a,d)=>{const j=judge(latest(d.id),d.nominal,d.upper,d.lower);if(j==="OK")a.ok++;else if(j==="NG")a.ng++;else a.none++;return a;},{ok:0,ng:0,none:0});
@@ -383,18 +411,18 @@ function renderTracker(app){
   });app.appendChild(sm);
 
   // Measurement table
-  const tw=h("div",{style:{background:"#fff",borderRadius:"10px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",overflow:"auto"}});
-  const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px",minWidth:"780px"}});
+  const tw=h("div",{style:{background:"#fff",borderRadius:"10px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",overflowX:"auto",overflowY:"visible"}});
+  const tbl=h("table",{style:{width:"100%",borderCollapse:"separate",borderSpacing:"0",fontSize:"13px",minWidth:"780px"}});
   const thr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"11px",fontWeight:"600"}});
-  [{t:"📄",a:"center",w:"32px"},{t:"種別",a:"center",w:"52px"},{t:"寸法",a:"left",w:"150px"},{t:"公差",a:"center",w:"70px"},{t:"上限 / 下限",a:"center",w:"80px"},{t:"中間値",a:"center",w:"70px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:c.a,width:c.w}},c.t)));
-  for(let i=0;i<ROUNDS;i++)thr.appendChild(h("th",{style:{padding:"7px 3px",textAlign:"center",minWidth:"85px"}},(i+1)+"回目"));
-  thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"100px"}},"状態"));
-  thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"44px"}},"判定"));
+  [{t:"📄",a:"center",w:"32px"},{t:"種別",a:"center",w:"52px"},{t:"寸法",a:"left",w:"150px"},{t:"公差",a:"center",w:"70px"},{t:"上限 / 下限",a:"center",w:"80px"},{t:"中間値",a:"center",w:"70px"}].forEach((c,i)=>thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:c.a,width:c.w,minWidth:c.w,...stickL(i,"#334155",5),boxShadow:i===5?"2px 0 4px rgba(0,0,0,.18)":"none"}},c.t)));
+  for(let i=0;i<RN();i++)thr.appendChild(h("th",{style:{padding:"7px 3px",textAlign:"center",minWidth:"85px"}},(i+1)+"個目"));
+  thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"100px",minWidth:"100px",...stickR(44,"#334155",5),boxShadow:"-2px 0 4px rgba(0,0,0,.18)"}},"状態"));
+  thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"44px",minWidth:"44px",...stickR(0,"#334155",5)}},"判定"));
   tbl.appendChild(h("thead",{},thr));
   const tbd=h("tbody",{});
 
   P.dims.forEach(dim=>{
-    const arr=P.meas[dim.id]||Array(ROUNDS).fill("");
+    const arr=P.meas[dim.id]||Array(RN()).fill("");
     const lv=latest(dim.id);const j=judge(lv,dim.nominal,dim.upper,dim.lower);
     const tr=h("tr",{id:`row-${dim.id}`,style:{borderBottom:"1px solid #f1f5f9",background:j==="NG"?"#fef2f2":"transparent"}});
     // Report checkbox
@@ -402,7 +430,8 @@ function renderTracker(app){
     const chk=h("input",{type:"checkbox",style:{cursor:"pointer",width:"16px",height:"16px"}});
     chk.checked=dim.inReport;
     chk.addEventListener("change",e=>{dim.inReport=e.target.checked;schedSave();});
-    tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},chk));
+    const RBG=j==="NG"?"#fef2f2":"#fff";
+    tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center",...stickL(0,RBG)}},chk));
     // Type dropdown
     const typeSel=h("select",{style:{fontSize:"11px",padding:"2px 4px",border:"1px solid #d1d5db",borderRadius:"4px",fontFamily:"inherit",background:"#f8fafc",color:"#334155",cursor:"pointer"}});
     const typeColors={"穴":"#2563eb","軸":"#dc2626","距離":"#64748b"};
@@ -412,24 +441,24 @@ function renderTracker(app){
     typeSel.style.color=typeColors[typeSel.value]||"#334155";
     typeSel.style.fontWeight="700";
     typeSel.addEventListener("change",e=>{dim.type=e.target.value;typeSel.style.color=typeColors[e.target.value]||"#334155";schedSave();});
-    tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},typeSel));
-    const ntd=h("td",{style:{padding:"7px 6px",whiteSpace:"nowrap"}},h("span",{style:{fontWeight:"800",fontSize:"15px",verticalAlign:"middle"}},dim.name));
+    tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center",...stickL(1,RBG)}},typeSel));
+    const ntd=h("td",{style:{padding:"7px 6px",whiteSpace:"nowrap",...stickL(2,RBG)}},h("span",{style:{fontWeight:"800",fontSize:"15px",verticalAlign:"middle"}},dim.name));
     if(dim.tClass)ntd.appendChild(h("span",{style:{fontSize:"14px",fontWeight:"700",background:"#dbeafe",color:"#1d4ed8",padding:"1px 6px",borderRadius:"4px",marginLeft:"5px",display:"inline-block",verticalAlign:"middle"}},dim.tClass));
     if(dim.qty&&dim.qty>1)ntd.appendChild(h("span",{style:{fontSize:"13px",fontWeight:"700",background:"#f1f5f9",color:"#475569",border:"1px solid #cbd5e1",padding:"1px 6px",borderRadius:"4px",marginLeft:"5px",display:"inline-block",verticalAlign:"middle"}},"×"+dim.qty));
     const tjParts=[];if(dim.method)tjParts.push(dim.method);if(dim.toolNo)tjParts.push(dim.toolNo);if(dim.jobNo)tjParts.push("J:"+dim.jobNo);
     if(tjParts.length)ntd.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"600",color:"#475569",marginTop:"3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},tjParts.join(" / ")));
     tr.appendChild(ntd);
-    tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",lineHeight:"1.6"}},
+    tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",lineHeight:"1.6",...stickL(3,RBG)}},
       h("div",{style:{color:"#16a34a",fontWeight:"600"}},fmtTol(dim.upper)),
       h("div",{style:{color:"#dc2626",fontWeight:"600"}},fmtTol(dim.lower))
     ));
-    tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",fontWeight:"700",lineHeight:"1.6"}},
+    tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",fontWeight:"700",lineHeight:"1.6",...stickL(4,RBG)}},
       h("div",{style:{color:"#334155"}},""+uLim(dim)),
       h("div",{style:{color:"#94a3b8"}},""+lLim(dim))
     ));
-    tr.appendChild(h("td",{style:{padding:"7px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"13px",fontWeight:"800",color:"#2563eb",background:"#eff6ff"}},""+midLim(dim)));
+    tr.appendChild(h("td",{style:{padding:"7px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"13px",fontWeight:"800",color:"#2563eb",...stickL(5,j==="NG"?"#fef2f2":"#eff6ff"),boxShadow:"2px 0 4px rgba(0,0,0,.10)"}},""+midLim(dim)));
 
-    for(let ri=0;ri<ROUNDS;ri++){
+    for(let ri=0;ri<RN();ri++){
       const td=h("td",{style:{padding:"3px 2px",textAlign:"center"}});
       const v=arr[ri]||"";
       const rj=judge(v,dim.nominal,dim.upper,dim.lower);
@@ -438,7 +467,7 @@ function renderTracker(app){
 
       // KEY FIX: Don't call render() on input - just update state and partial UI
       inp.addEventListener("input",e=>{
-        if(!P.meas[dim.id])P.meas[dim.id]=Array(ROUNDS).fill("");
+        if(!P.meas[dim.id])P.meas[dim.id]=Array(RN()).fill("");
         P.meas[dim.id][ri]=e.target.value;
         schedSave();
         updateRowUI(dim.id);
@@ -461,8 +490,8 @@ function renderTracker(app){
     }
 
     // Bar & judge with IDs for partial update
-    const barTd=h("td",{id:`bar-${dim.id}`,style:{padding:"3px 5px"}});barTd.appendChild(devBar(lv,dim.nominal,dim.upper,dim.lower));tr.appendChild(barTd);
-    const jt=h("td",{id:`judge-${dim.id}`,style:{padding:"7px 3px",textAlign:"center"}});if(j)jt.appendChild(h("div",{style:{display:"inline-block",padding:"2px 8px",borderRadius:"4px",fontWeight:"800",fontSize:"12px",color:"#fff",background:j==="OK"?"#16a34a":"#dc2626"}},j));tr.appendChild(jt);
+    const barTd=h("td",{id:`bar-${dim.id}`,style:{padding:"3px 5px",...stickR(44,RBG),boxShadow:"-2px 0 4px rgba(0,0,0,.10)"}});barTd.appendChild(devBar(lv,dim.nominal,dim.upper,dim.lower));tr.appendChild(barTd);
+    const jt=h("td",{id:`judge-${dim.id}`,style:{padding:"7px 3px",textAlign:"center",...stickR(0,RBG)}});if(j)jt.appendChild(h("div",{style:{display:"inline-block",padding:"2px 8px",borderRadius:"4px",fontWeight:"800",fontSize:"12px",color:"#fff",background:j==="OK"?"#16a34a":"#dc2626"}},j));tr.appendChild(jt);
     tbd.appendChild(tr);
   });
   tbl.appendChild(tbd);tw.appendChild(tbl);app.appendChild(tw);
