@@ -492,9 +492,9 @@ function renderProject(){
     h("div", { style:"font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;" + (isCloud() ? "background:#E6F4EA;color:#0B7A45" : "background:#FEF7E0;color:#8A6100"), text: isCloud() ? "同期" : "ローカル" })
   ]));
 
-  const body = h("div", { style:"flex:1;min-height:0;overflow-y:auto;padding:8px 6px 24px" });
+  const body = h("div", { style:"flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:8px 6px" });
   shell.appendChild(body);
-  if (TAB === "meas") renderMeas(body); else renderReport(body);
+  if (TAB === "meas") renderMeas(body); else { body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderReport(body); }
 }
 
 /* ── measurement view ── */
@@ -516,7 +516,7 @@ function renderMeas(body){
     h("span", { "data-sum":key, style:"font-size:15px;font-weight:800;line-height:1.1;color:" + fg + ";" + MONO, text:String(count) })
   ]);
 
-  body.appendChild(h("div", { style:"display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#FFF;border:1px solid #DADCE0;border-radius:12px;padding:5px 8px;margin-bottom:6px" }, [
+  body.appendChild(h("div", { style:"flex-shrink:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#FFF;border:1px solid #DADCE0;border-radius:12px;padding:5px 8px;margin-bottom:6px" }, [
     metaIn("加工日", "date", "date", "116px"), metaIn("作業者", "inspector", "text", "82px"), metaIn("S/N", "serial", "text", "82px"),
     h("label", { style:"display:flex;align-items:baseline;gap:5px" }, [ h("span", { style:"font-size:11px;color:#5F6368;font-weight:600", text:"回数" }), selR ]),
     h("div", { style:"width:1px;height:22px;background:#E8EAED" }),
@@ -531,7 +531,7 @@ function renderMeas(body){
 
   if (EDIT) body.appendChild(buildEditor());
   body.appendChild(buildTable());
-  body.appendChild(h("div", { style:"display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap" }, [
+  body.appendChild(h("div", { style:"flex-shrink:0;display:flex;gap:8px;justify-content:flex-end;padding-top:8px;flex-wrap:wrap" }, [
     h("button", { style:"height:40px;padding:0 16px;border:1px solid #DADCE0;border-radius:12px;background:#FFF;font-size:13px;font-weight:600", text:"工具セッティングシート出力",
       onclick: () => { if (!P.dims.some(d => (d.type || "穴") === "穴")){ alert("穴の寸法がありません"); return; } downloadToolSheet(P); } }),
     h("button", { style:"height:40px;padding:0 16px;border:1px solid #DADCE0;border-radius:12px;background:#FFF;color:#5F6368;font-size:13px;font-weight:600", text:"測定値をクリア",
@@ -546,14 +546,14 @@ function renderMeas(body){
 const PIN = [
   { w:32, label:"報", align:"center" },
   { w:52, label:"種別", align:"center" },
-  { w:118, label:"寸法", align:"left" },
-  { w:70, label:"公差", align:"center" },
-  { w:80, label:"上限 / 下限", align:"center" },
+  { w:126, label:"寸法", align:"left" },
+  { w:64, label:"公差", align:"center" },
+  { w:78, label:"上限 / 下限", align:"center" },
   { w:70, label:"狙い値", align:"center" }
 ];
 
 function buildTable(){
-  const wrap = h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;overflow:auto" });
+  const wrap = h("div", { style:"flex:1;min-height:120px;background:#FFF;border:1px solid #DADCE0;border-radius:16px;overflow:auto;scroll-padding-bottom:8px" });
   if (!P.dims.length){
     wrap.appendChild(h("div", { style:"text-align:center;padding:48px 16px;color:#5F6368;font-size:14px", text:"寸法が登録されていません。「寸法編集」から追加してください。" }));
     return wrap;
@@ -570,13 +570,15 @@ function buildTable(){
   });
   for (let i = 0; i < P.rounds; i++)
     trh.appendChild(h("th", { style:"position:sticky;top:0;z-index:10;background:#FFF;border-bottom:2px solid #E8EAED;padding:5px 3px;font-size:11px;font-weight:600;color:#5F6368;min-width:81px", text:(i+1) + "回目" }));
-  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:44px;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;border-left:2px solid #E8EAED;padding:5px 6px;font-size:11px;font-weight:600;color:#5F6368;width:96px;min-width:96px;max-width:96px", text:"状態" }));
+  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:44px;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;border-left:2px solid #E8EAED;padding:5px 6px;font-size:11px;font-weight:600;color:#5F6368;width:112px;min-width:112px;max-width:112px", text:"状態" }));
   trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:0;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;padding:5px 4px;font-size:11px;font-weight:600;color:#5F6368;width:44px;min-width:44px;max-width:44px", text:"判定" }));
   table.appendChild(h("thead", null, [trh]));
 
   const tbody = h("tbody");
   table.appendChild(tbody);
   P.dims.forEach(dim => tbody.appendChild(buildRow(dim)));
+  // a full-width spacer row so the last dimension is never sliced by the frame edge
+  wrap.appendChild(h("div", { style:"height:10px" }));
   return wrap;
 }
 
@@ -588,7 +590,7 @@ function buildRow(dim){
   let left = 0;
   const pinTd = (i, style, kids) => {
     const c = PIN[i];
-    const td = h("td", { "data-pin":"1", style:"position:sticky;left:" + left + "px;z-index:6;background:" + bg + ";border-bottom:1px solid #E8EAED;" + (i === PIN.length-1 ? "border-right:2px solid #E8EAED;" : "") + "width:" + c.w + "px;min-width:" + c.w + "px;max-width:" + c.w + "px;" + style }, kids);
+    const td = h("td", { "data-pin":"1", style:"position:sticky;left:" + left + "px;z-index:6;vertical-align:middle;background:" + bg + ";border-bottom:1px solid #E8EAED;" + (i === PIN.length-1 ? "border-right:2px solid #E8EAED;" : "") + "width:" + c.w + "px;min-width:" + c.w + "px;max-width:" + c.w + "px;" + style }, kids);
     left += c.w;
     return td;
   };
@@ -603,10 +605,10 @@ function buildRow(dim){
   selT.value = type;
   tr.appendChild(pinTd(1, "padding:4px 3px", [selT]));
 
-  const nameRow = h("div", { style:"display:flex;align-items:baseline;gap:5px" }, [
-    h("span", { style:"font-size:15px;font-weight:800", text:dim.name }),
-    dim.tClass ? h("span", { style:"font-size:12px;font-weight:700;padding:1px 5px;border-radius:6px;background:#E1F0FF;color:#0062CC", text:dim.tClass }) : null,
-    dim.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368", text:"×" + dim.qty }) : null
+  const nameRow = h("div", { style:"display:flex;align-items:baseline;gap:5px;min-width:0;overflow:hidden" }, [
+    h("span", { style:"font-size:15px;font-weight:800;flex-shrink:0", text:dim.name }),
+    dim.tClass ? h("span", { style:"font-size:12px;font-weight:700;padding:1px 5px;border-radius:6px;background:#E1F0FF;color:#0062CC;flex-shrink:0", text:dim.tClass }) : null,
+    dim.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368;flex-shrink:0", text:"×" + dim.qty }) : null
   ]);
   const tags = [];
   if (dim.method) tags.push(dim.method);
@@ -646,13 +648,13 @@ function buildRow(dim){
         P.meas[dim.id][ri] = e.target.value;
         save(); patchRow(dim);
       } });
-    const dev = h("div", { "data-dev": dim.id + "-" + ri, style:"height:" + (dv == null ? "0" : "13") + "px;font-size:10px;font-weight:700;" + MONO + ";color:" + (rj === "OK" ? "#0B7A45" : "#B3261E"), text: dv == null ? "" : "(" + fmtDev(dv) + ")" });
-    tr.appendChild(h("td", { style:"background:" + bg + ";border-bottom:1px solid #E8EAED;padding:4px 3px;text-align:center" }, [inp, dev]));
+    const dev = h("div", { "data-dev": dim.id + "-" + ri, style:"height:13px;font-size:10px;font-weight:700;line-height:13px;" + MONO + ";color:" + (rj === "OK" ? "#0B7A45" : "#B3261E"), text: dv == null ? "" : "(" + fmtDev(dv) + ")" });
+    tr.appendChild(h("td", { style:"vertical-align:middle;background:" + bg + ";border-bottom:1px solid #E8EAED;padding:4px 3px;text-align:center" }, [inp, dev]));
   }
 
   const lv = latestOf(P.meas, dim.id), j = judgeDim(dim, lv), g = barGeom(dim, lv) || { tL:0, tW:100, pos:null, ok:false };
   const dot = h("div", { "data-dot":String(dim.id), style:"position:absolute;top:-3px;width:15px;height:15px;border-radius:50%;border:3px solid #FFF;transform:translateX(-50%);box-shadow:0 2px 8px rgba(0,0,0,.28);display:" + (g.pos == null ? "none" : "block") + ";left:" + (g.pos == null ? 0 : g.pos) + "%;background:" + (g.ok ? "#0F9D58" : "#D93025") });
-  tr.appendChild(h("td", { "data-pin":"1", style:"position:sticky;right:44px;z-index:6;background:" + bg + ";border-bottom:1px solid #E8EAED;border-left:2px solid #E8EAED;padding:5px 6px;width:96px;min-width:96px;max-width:96px" }, [
+  tr.appendChild(h("td", { "data-pin":"1", style:"position:sticky;right:44px;z-index:6;vertical-align:middle;background:" + bg + ";border-bottom:1px solid #E8EAED;border-left:2px solid #E8EAED;padding:5px 6px;width:112px;min-width:112px;max-width:112px" }, [
     h("div", { style:"position:relative;height:10px;border-radius:5px;background:#FCE8E6" }, [
       h("div", { style:"position:absolute;top:0;bottom:0;border-radius:5px;background:#E6F4EA;left:" + g.tL + "%;width:" + g.tW + "%" }), dot
     ]),
@@ -660,7 +662,7 @@ function buildRow(dim){
       h("span", { text:String(lLim(dim)) }), h("span", { text:String(uLim(dim)) })
     ])
   ]));
-  tr.appendChild(h("td", { "data-pin":"1", style:"position:sticky;right:0;z-index:6;background:" + bg + ";border-bottom:1px solid #E8EAED;padding:4px 2px;text-align:center;width:44px;min-width:44px;max-width:44px" }, [
+  tr.appendChild(h("td", { "data-pin":"1", style:"position:sticky;right:0;z-index:6;vertical-align:middle;background:" + bg + ";border-bottom:1px solid #E8EAED;padding:4px 2px;text-align:center;width:44px;min-width:44px;max-width:44px" }, [
     h("span", { "data-judge":String(dim.id), style:"display:inline-block;min-width:36px;padding:4px 3px;border-radius:6px;font-size:12px;font-weight:800;background:" + (j === "OK" ? "#E6F4EA" : j === "NG" ? "#FCE8E6" : "#F1F3F4") + ";color:" + (j === "OK" ? "#0B7A45" : j === "NG" ? "#B3261E" : "#5F6368"), text: j || "—" })
   ]));
   return tr;
@@ -673,7 +675,7 @@ function patchRow(dim){
   for (let i = 0; i < P.rounds; i++){
     const v = arr[i] || "", rj = judgeDim(dim, v), dv = devOf(dim, v);
     const dev = q('[data-dev="' + dim.id + "-" + i + '"]');
-    if (dev){ dev.textContent = dv == null ? "" : "(" + fmtDev(dv) + ")"; dev.style.height = dv == null ? "0px" : "13px"; dev.style.color = rj === "OK" ? "#0B7A45" : "#B3261E"; }
+    if (dev){ dev.textContent = dv == null ? "" : "(" + fmtDev(dv) + ")"; dev.style.color = rj === "OK" ? "#0B7A45" : "#B3261E"; }
     const inp = q('[data-cell="' + dim.id + "-" + i + '"]');
     if (inp){
       inp.style.borderColor = rj === "NG" ? "#D93025" : rj === "OK" ? "#A8DCC0" : "#DADCE0";
@@ -704,7 +706,7 @@ function patchRow(dim){
 
 /* ── dimension editor (1 row per dimension) ── */
 function buildEditor(){
-  const box = h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:12px;margin-bottom:8px" });
+  const box = h("div", { style:"flex-shrink:0;background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:12px;margin-bottom:8px" });
   const mgMsg = h("div", { style:"margin-top:6px;font-size:13px;font-weight:600;color:#B3261E" });
   box.appendChild(h("div", { style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px" }, [
     h("div", { style:"font-size:15px;font-weight:700;margin-right:auto", text:"寸法リスト編集" }),
