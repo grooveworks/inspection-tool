@@ -5,11 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>寸法検査ツール</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif;background:#f1f5f9;min-height:100vh;padding:12px;color:#334155}input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}input[type=number]{-moz-appearance:textfield}button{font-family:inherit;cursor:pointer}
-.ed-row:hover{background:#bfdbfe!important}
-.ed-row td{transition:background .15s}
-.ed-input:focus,.ed-select:focus{outline:2px solid #3b82f6!important;outline-offset:1px;border-color:#3b82f6!important}
-@media print{.no-print{display:none!important}.print-area{box-shadow:none!important;border-radius:0!important}body{background:#fff;padding:0}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif;background:#F2F2F7;color:#202124;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+input,select,textarea,button{font-family:inherit}
+button{cursor:pointer;white-space:nowrap}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#007AFF!important;box-shadow:0 0 0 2px #E1F0FF}
+a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:rgba(0,0,0,.18);border-radius:3px}::-webkit-scrollbar-track{background:transparent}
+/* below 820px the pinned columns would leave no room for input: fall back to plain scrolling */
+@media (max-width:820px){td[data-pin]{position:static!important}th[data-pin]{left:auto!important;right:auto!important}}
+@media print{.no-print{display:none!important}body{background:#fff}.print-area{border:none!important;border-radius:0!important;padding:0!important}@page{size:A4 portrait;margin:14mm}}
 </style>
 </head>
 <body>
@@ -17,21 +24,245 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const FB={apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
-let db=null,useFB=false;try{firebase.initializeApp(FB);db=firebase.firestore();useFB=true;}catch(e){console.warn(e);}
-const Store={
-  async listProjects(){if(useFB){try{const s=await db.collection("projects").orderBy("updatedAt","desc").get();return s.docs.map(d=>({id:d.id,...d.data()}));}catch(e){console.error(e);}}const r=localStorage.getItem("_projects");return r?JSON.parse(r):[];},
-  async saveProject(p){p.updatedAt=Date.now();if(useFB){try{await db.collection("projects").doc(p.id).set(p);}catch(e){console.error(e);}}const list=JSON.parse(localStorage.getItem("_projects")||"[]");const idx=list.findIndex(x=>x.id===p.id);if(idx>=0)list[idx]=p;else list.unshift(p);localStorage.setItem("_projects",JSON.stringify(list));},
-  async deleteProject(id){if(useFB){try{await db.collection("projects").doc(id).delete();}catch(e){console.error(e);}}const list=JSON.parse(localStorage.getItem("_projects")||"[]").filter(x=>x.id!==id);localStorage.setItem("_projects",JSON.stringify(list));},
-  async getProject(id){if(useFB){try{const d=await db.collection("projects").doc(id).get();if(d.exists)return{id:d.id,...d.data()};}catch(e){console.error(e);}}const list=JSON.parse(localStorage.getItem("_projects")||"[]");return list.find(x=>x.id===id)||null;},
-  onProjectSync(id,cb){if(useFB)return db.collection("projects").doc(id).onSnapshot(doc=>{if(doc.exists)cb({id:doc.id,...doc.data()});});return null;}
+const VER = "v2.0.0";
+
+const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
+let db = null, useFB = false, inited = false;
+function initFB(){
+  if (inited) return useFB;
+  inited = true;
+  try {
+    if (window.firebase && window.firebase.firestore) {
+      if (!firebase.apps.length) firebase.initializeApp(FB);
+      db = firebase.firestore(); useFB = true;
+    }
+  } catch(e){ console.warn('firebase unavailable', e); }
+  return useFB;
+}
+function isCloud(){ return useFB; }
+
+const LS = "_projects";
+const lsList = () => { try { return JSON.parse(localStorage.getItem(LS) || "[]"); } catch(e){ return []; } };
+const lsWrite = (l) => localStorage.setItem(LS, JSON.stringify(l));
+
+const Store = {
+  async listProjects(){
+    if (useFB) { try { const s = await db.collection("projects").orderBy("updatedAt","desc").get(); return s.docs.map(d=>({id:d.id,...d.data()})); } catch(e){ console.error(e); } }
+    return lsList();
+  },
+  async saveProject(p){
+    p.updatedAt = Date.now();
+    if (useFB) { try { await db.collection("projects").doc(p.id).set(JSON.parse(JSON.stringify(p))); } catch(e){ console.error(e); } }
+    const list = lsList(); const i = list.findIndex(x=>x.id===p.id);
+    if (i>=0) list[i]=p; else list.unshift(p);
+    lsWrite(list);
+  },
+  async deleteProject(id){
+    if (useFB) { try { await db.collection("projects").doc(id).delete(); } catch(e){ console.error(e); } }
+    lsWrite(lsList().filter(x=>x.id!==id));
+  },
+  async getProject(id){
+    if (useFB) { try { const d = await db.collection("projects").doc(id).get(); if (d.exists) return {id:d.id,...d.data()}; } catch(e){ console.error(e); } }
+    return lsList().find(x=>x.id===id) || null;
+  },
+  onProjectSync(id, cb){
+    if (useFB) return db.collection("projects").doc(id).onSnapshot(doc=>{ if (doc.exists) cb({id:doc.id,...doc.data()}); });
+    return null;
+  }
 };
-const VER="v1.3.0";
-const ROUNDS=5,r4=v=>Math.round(v*10000)/10000;
-const PRESET=[{id:1,name:"φ6",tClass:"H8",nominal:6,upper:.018,lower:0},{id:2,name:"φ47",tClass:"P7",nominal:47,upper:-.017,lower:-.042},{id:3,name:"φ103",tClass:"H7",nominal:103,upper:.035,lower:0},{id:4,name:"φ143",tClass:"H7",nominal:143,upper:.04,lower:0},{id:5,name:"φ60",tClass:"",nominal:60,upper:-.02,lower:-.041},{id:6,name:"φ130.5",tClass:"",nominal:130.5,upper:.25,lower:.05},{id:7,name:"φ136.5",tClass:"",nominal:136.5,upper:.15,lower:.05},{id:8,name:"φ138.5",tClass:"",nominal:138.5,upper:.25,lower:.05}];
-let view="list",projects=[],P=null,unsub=null,tab="tracker",showEditor=false,editId=null,_form=null,saveTimer=null;
-function judge(v,nom,up,lo){if(!v||v==="")return null;const n=parseFloat(v);if(isNaN(n))return null;const d=r4(n-nom);return d>=r4(lo)&&d<=r4(up)?"OK":"NG";}
-function uLim(d){return r4(d.nominal+d.upper)}function lLim(d){return r4(d.nominal+d.lower)}function midLim(d){return r4(d.nominal+(d.upper+d.lower)/2)}function dName(d){return d.tClass?d.name+" "+d.tClass:d.name}function fmtTol(v){return v>0?"+"+v:v===0?"0":""+v}
+
+const DEFAULT_ROUNDS = 5;   // base model: ROUNDS = 5
+const ROUND_OPTIONS = [5, 10, 20, 50];
+const MAX_ROUNDS = 50;
+
+const PRESET = [
+  {id:1,name:"φ6",tClass:"H8",nominal:6,upper:.018,lower:0},
+  {id:2,name:"φ47",tClass:"P7",nominal:47,upper:-.017,lower:-.042},
+  {id:3,name:"φ103",tClass:"H7",nominal:103,upper:.035,lower:0},
+  {id:4,name:"φ143",tClass:"H7",nominal:143,upper:.04,lower:0},
+  {id:5,name:"φ60",tClass:"",nominal:60,upper:-.02,lower:-.041},
+  {id:6,name:"φ130.5",tClass:"",nominal:130.5,upper:.25,lower:.05},
+  {id:7,name:"φ136.5",tClass:"",nominal:136.5,upper:.15,lower:.05},
+  {id:8,name:"φ138.5",tClass:"",nominal:138.5,upper:.25,lower:.05}
+];
+
+const r4 = v => Math.round(v*10000)/10000;
+const uLim = d => r4(d.nominal + d.upper);
+const lLim = d => r4(d.nominal + d.lower);
+const midLim = d => r4(d.nominal + (d.upper + d.lower)/2);
+const dName = d => d.tClass ? d.name + " " + d.tClass : d.name;
+const fmtTol = v => v > 0 ? "+" + v : v === 0 ? "0" : "" + v;
+const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+function judge(v, nom, up, lo){
+  if (v === null || v === undefined || v === "") return null;
+  const n = parseFloat(v); if (isNaN(n)) return null;
+  const d = r4(n - nom);
+  return (d >= r4(lo) && d <= r4(up)) ? "OK" : "NG";
+}
+function judgeDim(dim, v){ return judge(v, dim.nominal, dim.upper, dim.lower); }
+function devOf(dim, v){ if (v === "" || v == null) return null; const n = parseFloat(v); if (isNaN(n)) return null; return r4(n - midLim(dim)); }
+function fmtDev(dv){ return dv == null ? "" : (dv > 0 ? "+" + dv : "" + dv); }
+
+function latestOf(meas, id){
+  const a = (meas && meas[id]) || [];
+  for (let i = a.length - 1; i >= 0; i--) if (a[i] !== "" && a[i] != null) return a[i];
+  return "";
+}
+function filledCount(meas, id){
+  const a = (meas && meas[id]) || [];
+  return a.filter(x => x !== "" && x != null).length;
+}
+function statsOf(dims, meas){
+  return (dims||[]).reduce((acc,d)=>{
+    const j = judge(latestOf(meas, d.id), d.nominal, d.upper, d.lower);
+    if (j === "OK") acc.ok++; else if (j === "NG") acc.ng++; else acc.none++;
+    return acc;
+  }, {ok:0, ng:0, none:0});
+}
+// all recorded values judged (not just the latest)
+function allStats(dims, meas){
+  let ok=0, ng=0;
+  (dims||[]).forEach(d=>{ ((meas&&meas[d.id])||[]).forEach(v=>{ const j=judge(v,d.nominal,d.upper,d.lower); if(j==="OK")ok++; else if(j==="NG")ng++; }); });
+  return {ok, ng};
+}
+
+// geometry for the deviation bar, in %
+function barGeom(dim, v){
+  const range = dim.upper - dim.lower;
+  if (range === 0) return null;
+  const mg = range * 0.6, dL = dim.lower - mg, dU = dim.upper + mg, dR = dU - dL;
+  const g = { tL: ((dim.lower - dL)/dR)*100, tW: (range/dR)*100, pos: null, ok: false };
+  if (v === "" || v == null) return g;
+  const n = parseFloat(v); if (isNaN(n)) return g;
+  const dev = n - dim.nominal;
+  g.pos = Math.max(0, Math.min(100, ((dev - dL)/dR)*100));
+  g.ok = dev >= dim.lower && dev <= dim.upper;
+  return g;
+}
+
+function emptyRounds(n){ return Array(n).fill(""); }
+function normalizeProject(p){
+  if (!p.dims) p.dims = [];
+  if (!p.meas) p.meas = {};
+  if (!p.rounds) p.rounds = DEFAULT_ROUNDS;
+  // records predating the selectable round count keep the base model's 5 columns,
+  // unless the operator picked a count (roundsSet) or values exist beyond round 5
+  if (!p.roundsSet && p.rounds > DEFAULT_ROUNDS){
+    let used = 0;
+    p.dims.forEach(d => {
+      const a = p.meas[d.id] || [];
+      for (let i = a.length - 1; i >= 0; i--) if (a[i] !== "" && a[i] != null){ used = Math.max(used, i + 1); break; }
+    });
+    if (used <= DEFAULT_ROUNDS) p.rounds = DEFAULT_ROUNDS;
+  }
+  p.rounds = Math.min(MAX_ROUNDS, Math.max(1, p.rounds));
+  p.dims.forEach(d=>{
+    if (!d.type) d.type = "穴";
+    if (d.inReport === undefined) d.inReport = true;
+    if (!Array.isArray(p.meas[d.id])) p.meas[d.id] = emptyRounds(p.rounds);
+    while (p.meas[d.id].length < p.rounds) p.meas[d.id].push("");
+  });
+  return p;
+}
+function newProject(opts){
+  const dims = opts.preset ? JSON.parse(JSON.stringify(PRESET)) : [];
+  const rounds = opts.rounds || DEFAULT_ROUNDS;
+  const meas = {}; dims.forEach(d => meas[d.id] = emptyRounds(rounds));
+  return normalizeProject({
+    id: genId(), partName: opts.partName || "", drawingNo: opts.drawingNo || "",
+    dims, meas, rounds, roundsSet: true, inspector: "", date: new Date().toISOString().split("T")[0],
+    serial: "", createdAt: Date.now(), updatedAt: Date.now()
+  });
+}
+function parseImport(raw){
+  const data = JSON.parse(raw);
+  if (!data.dims || !Array.isArray(data.dims) || !data.dims.length) throw new Error("寸法データ(dims)がありません");
+  data.dims.forEach(d=>{ if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("寸法データの形式が不正です (name, nominal, upper, lower が必要)"); });
+  return data;
+}
+function dimFromJSON(d, id){
+  const type = d.type || "穴";
+  return {
+    id, name: d.name || (type === "距離" ? "" + d.nominal : "φ" + d.nominal),
+    tClass: d.tClass || "", nominal: parseFloat(d.nominal), upper: parseFloat(d.upper), lower: parseFloat(d.lower),
+    type, qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, inReport: d.inReport !== false,
+    method: d.method || "", toolNo: d.toolNo || "", jobNo: d.jobNo || ""
+  };
+}
+
+const HOLE_LETTERS = ["","H","G","F","E","D","C","B","A","JS","J","K","M","N","P","R","S","T","U","X","Z","ZA","ZB","ZC"];
+const SHAFT_LETTERS = ["","h","g","f","e","d","c","b","a","js","j","k","m","n","p","r","s"];
+const GRADES = ["","5","6","7","8","9","10","11"];
+const METHODS = ["","ボア","コンタ","リーマ","ドリル","ガンドリル"];
+const TYPE_COLOR = {"穴":"#007AFF","軸":"#FF9500","距離":"#5856D6"};
+const TYPE_TINT  = {"穴":"#E1F0FF","軸":"#FFF1DE","距離":"#E9E9FB"};
+// darkened text for use ON the tints above — never the pure accent (AA)
+const TYPE_TEXT  = {"穴":"#0062CC","軸":"#8A4B00","距離":"#3E3CA8"};
+
+function sortDims(dims){
+  const o = {"穴":0,"軸":1,"距離":2};
+  dims.sort((a,b)=>{ const ta=o[a.type||"穴"]||0, tb=o[b.type||"穴"]||0; return ta!==tb ? ta-tb : (b.nominal||0)-(a.nominal||0); });
+}
+
+// ── 工具セッティングシート (standalone HTML, offline-usable on the shop floor) ──
+function toolSheetHTML(P){
+  const holes = (P.dims||[]).filter(d => (d.type||"穴") === "穴");
+  const title = (P.partName || "品名なし") + " / " + (P.drawingNo || "図番なし");
+  const key = "toolsheet_" + (P.id || "x");
+  const rows = holes.map((d,i)=>`<tr>
+    <td class="chkcell"><div class="chk c0" id="chk${i}" onclick="t(this)">—</div></td>
+    <td class="nm">${dName(d)}${d.qty>1?' <span class="qty">×'+d.qty+'</span>':''}</td>
+    <td class="sub">${d.method||"—"}</td><td class="sub">${d.toolNo||"—"}</td><td class="sub">${d.jobNo||"—"}</td>
+    <td class="tol"><span class="up">${fmtTol(d.upper)}</span><br><span class="lo">${fmtTol(d.lower)}</span></td>
+    <td class="lim">${uLim(d)}<br><span class="dim">${lLim(d)}</span></td>
+    <td class="aim">${midLim(d)}</td></tr>`).join("");
+  return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><title>${title} 工具セッティング</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;background:#F2F2F7;color:#202124;-webkit-tap-highlight-color:transparent}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid #DADCE0;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;z-index:20}
+h1{font-size:17px;font-weight:700}h1 span{display:block;font-size:12px;font-weight:400;color:#5F6368;margin-top:2px}
+button{font:inherit;padding:12px 18px;min-height:44px;border:1px solid #DADCE0;background:#fff;color:#D93025;border-radius:12px;font-weight:600;cursor:pointer}
+table{width:100%;border-collapse:separate;border-spacing:0 8px;padding:12px}
+th{font-size:12px;font-weight:600;color:#5F6368;text-align:center;padding:0 8px 4px}
+th.l{text-align:left}
+td{background:#fff;padding:14px 8px;text-align:center;border-top:1px solid #DADCE0;border-bottom:1px solid #DADCE0;font-size:15px}
+td:first-child{border-left:1px solid #DADCE0;border-radius:14px 0 0 14px}
+td:last-child{border-right:1px solid #DADCE0;border-radius:0 14px 14px 0}
+.chkcell{width:78px;padding:8px}
+.chk{min-height:52px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;border-radius:12px;cursor:pointer;user-select:none}
+.c0{background:#F1F3F4;color:#80868B}.c1{background:#E6F4EA;color:#0F9D58}.c2{background:#E1F0FF;color:#007AFF}
+.nm{text-align:left;font-weight:700;font-size:19px;white-space:nowrap}
+.qty{font-size:13px;color:#5F6368;font-weight:600}
+.sub{color:#5F6368;font-size:14px}
+.tol,.lim{font-family:"SF Mono",Menlo,monospace;font-size:14px;line-height:1.5}
+.up{color:#0F9D58}.lo{color:#D93025}.dim{color:#80868B}
+.aim{font-family:"SF Mono",Menlo,monospace;font-size:22px;font-weight:700;color:#007AFF}
+.legend{padding:0 16px 24px;color:#5F6368;font-size:13px;line-height:1.6}
+</style></head><body>
+<header><h1>工具セッティング（穴）<span>${title}</span></h1><button onclick="resetAll()">全リセット</button></header>
+<table><thead><tr><th>済</th><th class="l">寸法</th><th>加工方法</th><th>工具No.</th><th>Job</th><th>上/下偏差</th><th>上限/下限</th><th>狙い値</th></tr></thead><tbody>${rows}</tbody></table>
+<div class="legend">タップで — → ✓（セット済） → ✓✓（確認済）。状態はこの端末に保存されます。</div>
+<script>
+var KEY=${JSON.stringify(key)};
+function t(e){var v=e.textContent.trim();if(v==="—"){e.textContent="✓";e.className="chk c1"}else if(v==="✓"){e.textContent="✓✓";e.className="chk c2"}else{e.textContent="—";e.className="chk c0"}save()}
+function save(){var d={};document.querySelectorAll(".chk").forEach(function(c){d[c.id]=c.textContent.trim()});localStorage.setItem(KEY,JSON.stringify(d))}
+function load(){try{var d=JSON.parse(localStorage.getItem(KEY)||"{}");Object.keys(d).forEach(function(k){var c=document.getElementById(k);if(!c)return;c.textContent=d[k];c.className="chk "+(d[k]==="✓"?"c1":d[k]==="✓✓"?"c2":"c0")})}catch(e){}}
+function resetAll(){if(!confirm("全てリセットしますか"))return;localStorage.removeItem(KEY);document.querySelectorAll(".chk").forEach(function(c){c.textContent="—";c.className="chk c0"})}
+load();
+<\/script></body></html>`;
+}
+function downloadToolSheet(P){
+  const blob = new Blob([toolSheetHTML(P)], {type:"text/html"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (P.partName||"案件") + "_工具セッティング.html";
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+
 // JIS B 0401 Complete Tolerance Lookup (from CSV data, values in 0.1μm)
 function lookupFit(tClass,nominal){
 if(!tClass||!nominal)return null;
@@ -79,439 +310,572 @@ if(isHole){
   return[(fd+itv)/10000,fd/10000];
 }
 }
-function latest(id){const a=(P&&P.meas&&P.meas[id])||[];for(let i=a.length-1;i>=0;i--)if(a[i]!=="")return a[i];return"";}
-function schedSave(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(P)Store.saveProject(P);},500);}
-function genId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
-function h(tag,a,...ch){const el=document.createElement(tag);if(a)Object.entries(a).forEach(([k,v])=>{if(k==="style"&&typeof v==="object")Object.assign(el.style,v);else if(k.startsWith("on"))el.addEventListener(k.slice(2).toLowerCase(),v);else if(k==="className")el.className=v;else if(k==="value")el.value=v;else el.setAttribute(k,v)});ch.flat(9).forEach(c=>{if(c==null||c===false)return;el.appendChild(typeof c==="string"||typeof c==="number"?document.createTextNode(c):c)});return el}
-function devBar(val,nom,up,lo){const w=h("div",{style:{position:"relative",height:"18px",width:"100%"}});if(!val||val==="")return w;const n=parseFloat(val);if(isNaN(n))return w;const dev=n-nom,range=up-lo;if(range===0)return w;const mg=range*.6,dL=lo-mg,dU=up+mg,dR=dU-dL,tL=((lo-dL)/dR)*100,tW=(range/dR)*100,pos=Math.max(0,Math.min(100,((dev-dL)/dR)*100)),ok=dev>=lo&&dev<=up;w.innerHTML=`<div style="position:absolute;left:0;right:0;top:4px;height:10px;background:#fecaca;border-radius:5px"></div><div style="position:absolute;left:${tL}%;width:${tW}%;top:4px;height:10px;background:#bbf7d0;border-radius:5px;border:1px solid #86efac"></div><div style="position:absolute;left:${pos}%;top:3px;width:12px;height:12px;border-radius:50%;transform:translateX(-50%);background:${ok?"#16a34a":"#dc2626"};border:2px solid #fff;box-shadow:0 0 5px ${ok?"rgba(22,163,74,.4)":"rgba(220,38,38,.4)"};z-index:2"></div>`;return w;}
 
-// ═══ UPDATE HELPERS (partial DOM updates instead of full re-render) ═══
-function updateRowUI(dimId){
-  const dim=P.dims.find(d=>d.id===dimId);if(!dim)return;
-  const lv=latest(dimId);const j=judge(lv,dim.nominal,dim.upper,dim.lower);
-  // Update deviation texts
-  for(let ri=0;ri<ROUNDS;ri++){
-    const devEl=document.getElementById(`dev-${dimId}-${ri}`);
-    const v=(P.meas[dimId]||[])[ri]||"";
-    if(devEl){
-      if(v!==""){const mid=midLim(dim);const dv=r4(parseFloat(v)-mid);const rj=judge(v,dim.nominal,dim.upper,dim.lower);devEl.textContent="("+(dv>0?"+":"")+dv+")";devEl.style.color=rj==="OK"?"#16a34a":"#dc2626";devEl.style.display="";}
-      else{devEl.textContent="";devEl.style.display="none";}
-    }
-    // Update input border
-    const inp=document.querySelector(`[data-dim="${dimId}"][data-ri="${ri}"]`);
-    if(inp){const rj=judge(v,dim.nominal,dim.upper,dim.lower);inp.style.borderColor=rj==="NG"?"#fca5a5":"#d1d5db";inp.style.background=rj==="NG"?"#fff5f5":"#f8fafc";}
+
+/* ── tiny DOM helper (same shape as the original file's h()) ── */
+function h(tag, attrs, children){
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs){
+    const v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === "style") e.style.cssText = v;
+    else if (k === "html") e.innerHTML = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.slice(0,2) === "on") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === "checked" || k === "disabled" || k === "readOnly") e[k] = !!v;
+    else if (k === "value") e.value = v;
+    else e.setAttribute(k, v);
   }
-  // Update bar
-  const barEl=document.getElementById(`bar-${dimId}`);
-  if(barEl){barEl.innerHTML="";barEl.appendChild(devBar(lv,dim.nominal,dim.upper,dim.lower));}
-  // Update judge
-  const jEl=document.getElementById(`judge-${dimId}`);
-  if(jEl){jEl.innerHTML="";if(j)jEl.appendChild(h("div",{style:{display:"inline-block",padding:"2px 8px",borderRadius:"4px",fontWeight:"800",fontSize:"12px",color:"#fff",background:j==="OK"?"#16a34a":"#dc2626"}},j));}
-  // Update row bg
-  const row=document.getElementById(`row-${dimId}`);
-  if(row)row.style.background=j==="NG"?"#fef2f2":"transparent";
-  // Update summary
-  updateSummary();
+  (children || []).forEach(c => { if (c == null || c === false) return; e.appendChild(typeof c === "object" ? c : document.createTextNode(String(c))); });
+  return e;
 }
-function updateSummary(){
-  const st=P.dims.reduce((a,d)=>{const j=judge(latest(d.id),d.nominal,d.upper,d.lower);if(j==="OK")a.ok++;else if(j==="NG")a.ng++;else a.none++;return a;},{ok:0,ng:0,none:0});
-  const ids=["sum-total","sum-ok","sum-ng","sum-none"];
-  const vals=[P.dims.length,st.ok,st.ng,st.none];
-  ids.forEach((id,i)=>{const el=document.getElementById(id);if(el)el.textContent=vals[i];});
-  // Update tab badge
-  const fc=P.dims.filter(d=>d.inReport!==false&&latest(d.id)!=="").length;
-  const tb=document.getElementById("tab-report");
-  if(tb)tb.textContent="📄 ② 検査成績書"+(fc>0?` (${fc}件)`:"");
-}
+const MONO = "font-family:'SF Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums";
+const app = () => document.getElementById("app");
 
-// ═══ LIST ═══
-async function showList(){view="list";if(unsub){unsub();unsub=null;}P=null;projects=await Store.listProjects();render();}
-function renderList(app){
-  app.appendChild(h("div",{style:{background:"#1e293b",borderRadius:"10px",padding:"16px 20px",marginBottom:"16px",color:"#fff"}},h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}},h("div",{style:{fontSize:"10px",letterSpacing:"3px",color:"#f59e0b",fontWeight:"700"}},"INSPECTION TOOL"),h("div",{style:{fontSize:"10px",color:"#94a3b8",fontFamily:"'SF Mono','Consolas',monospace"}},VER)),h("div",{style:{fontSize:"22px",fontWeight:"800"}},"案件一覧"),h("div",{style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px"}},useFB?"☁ Firebase同期中":"📱 ローカル保存")));
-  app.appendChild(h("button",{id:"add-btn",style:{width:"100%",padding:"14px",borderRadius:"10px",border:"2px dashed #94a3b8",background:"transparent",fontSize:"14px",fontWeight:"700",color:"#64748b",marginBottom:"16px"},onClick:()=>{
-    if(document.getElementById("new-form"))return;
-    const fm=h("div",{id:"new-form",style:{background:"#f0fdf4",border:"2px solid #86efac",borderRadius:"10px",padding:"16px",marginBottom:"16px"}});
-    fm.appendChild(h("div",{style:{fontSize:"14px",fontWeight:"700",color:"#16a34a",marginBottom:"10px"}},"新規案件"));
-    const data={partName:"",drawingNo:"",preset:"yes"};
-    const fg=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"}});
-    [{l:"品名",k:"partName",p:"CASE GEAR"},{l:"図番",k:"drawingNo",p:"0U9W-46365-00"}].forEach(f=>{const inp=h("input",{type:"text",placeholder:f.p,style:{width:"100%",padding:"8px",fontSize:"13px",border:"2px solid #e2e8f0",borderRadius:"6px",outline:"none",fontFamily:"inherit",boxSizing:"border-box"}});inp.addEventListener("input",e=>data[f.k]=e.target.value);fg.appendChild(h("div",{},h("div",{style:{fontSize:"10px",color:"#94a3b8",fontWeight:"600",marginBottom:"3px"}},f.l),inp));});fm.appendChild(fg);
-    fm.appendChild(h("div",{style:{fontSize:"10px",color:"#94a3b8",fontWeight:"600",marginBottom:"3px"}},"寸法プリセット"));
-    const sel=h("select",{style:{width:"100%",padding:"8px",fontSize:"13px",border:"2px solid #e2e8f0",borderRadius:"6px",fontFamily:"inherit",marginBottom:"10px",background:"#fff"}});sel.appendChild(h("option",{value:"yes"},"CASE GEAR（8項目）"));sel.appendChild(h("option",{value:"no"},"空（後から追加）"));sel.addEventListener("change",e=>data.preset=e.target.value);fm.appendChild(sel);
-    fm.appendChild(h("div",{style:{display:"flex",gap:"8px"}},h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"none",background:"#16a34a",color:"#fff",fontSize:"13px",fontWeight:"700"},onClick:async()=>{const dims=data.preset==="yes"?JSON.parse(JSON.stringify(PRESET)):[];const meas={};dims.forEach(d=>meas[d.id]=Array(ROUNDS).fill(""));const proj={id:genId(),partName:data.partName,drawingNo:data.drawingNo,dims,meas,inspector:"",date:new Date().toISOString().split("T")[0],serial:"",createdAt:Date.now(),updatedAt:Date.now()};await Store.saveProject(proj);openProject(proj.id);}},"作成"),h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",color:"#64748b",fontSize:"13px",fontWeight:"600"},onClick:()=>fm.remove()},"キャンセル")));
-    document.getElementById("add-btn").after(fm);
-  }},"＋ 新しい案件を作成"));
-  // Import button
-  app.appendChild(h("button",{id:"import-btn",style:{width:"100%",padding:"12px",borderRadius:"10px",border:"2px solid #93c5fd",background:"#eff6ff",fontSize:"14px",fontWeight:"700",color:"#2563eb",marginBottom:"16px"},onClick:()=>{
-    if(document.getElementById("import-form"))return;
-    const fm=h("div",{id:"import-form",style:{background:"#eff6ff",border:"2px solid #93c5fd",borderRadius:"10px",padding:"16px",marginBottom:"16px"}});
-    fm.appendChild(h("div",{style:{fontSize:"14px",fontWeight:"700",color:"#2563eb",marginBottom:"4px"}},"📋 データインポート"));
-    fm.appendChild(h("div",{style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},"Claudeから出力されたJSONテキストを貼り付けてください"));
-    const ta=h("textarea",{id:"import-ta",placeholder:'ここにJSONを貼り付け...',style:{width:"100%",height:"120px",padding:"10px",fontSize:"12px",fontFamily:"'SF Mono','Consolas',monospace",border:"2px solid #e2e8f0",borderRadius:"6px",outline:"none",resize:"vertical",boxSizing:"border-box",background:"#fff"}});
-    ta.addEventListener("focus",()=>ta.style.borderColor="#3b82f6");
-    ta.addEventListener("blur",()=>ta.style.borderColor="#e2e8f0");
-    fm.appendChild(ta);
-    const errEl=h("div",{id:"import-err",style:{fontSize:"12px",color:"#dc2626",marginTop:"6px",display:"none"}});
-    fm.appendChild(errEl);
-    const prevEl=h("div",{id:"import-preview",style:{marginTop:"8px",display:"none"}});
-    fm.appendChild(prevEl);
-    fm.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"10px"}},
-      h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"none",background:"#2563eb",color:"#fff",fontSize:"13px",fontWeight:"700"},onClick:async()=>{
-        const raw=document.getElementById("import-ta").value.trim();
-        const err=document.getElementById("import-err");
-        err.style.display="none";
-        try{
-          const data=JSON.parse(raw);
-          if(!data.dims||!Array.isArray(data.dims)||data.dims.length===0){err.textContent="寸法データ(dims)がありません";err.style.display="";return;}
-          // Validate dims
-          for(const d of data.dims){if(!d.name||d.nominal==null||d.upper==null||d.lower==null){err.textContent="寸法データの形式が不正です（name,nominal,upper,lowerが必要）";err.style.display="";return;}}
-          // Create project
-          const dims=data.dims.map((d,i)=>({id:i+1,name:d.name,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",qty:parseInt(d.qty,10)>1?parseInt(d.qty,10):1,method:d.method||"",toolNo:d.toolNo||"",jobNo:d.jobNo||""}));
-          const meas={};dims.forEach(d=>meas[d.id]=Array(ROUNDS).fill(""));
-          const proj={id:genId(),partName:data.partName||"",drawingNo:data.drawingNo||"",dims,meas,inspector:"",date:new Date().toISOString().split("T")[0],serial:"",createdAt:Date.now(),updatedAt:Date.now()};
-          await Store.saveProject(proj);
-          openProject(proj.id);
-        }catch(e){err.textContent="JSONの解析に失敗しました: "+e.message;err.style.display="";}
-      }},"取込"),
-      h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"none",background:"#64748b",color:"#fff",fontSize:"13px",fontWeight:"700"},onClick:()=>{
-        // Preview
-        const raw=document.getElementById("import-ta").value.trim();
-        const err=document.getElementById("import-err");
-        const prev=document.getElementById("import-preview");
-        err.style.display="none";prev.style.display="none";
-        try{
-          const data=JSON.parse(raw);
-          if(!data.dims||!Array.isArray(data.dims)){err.textContent="寸法データ(dims)がありません";err.style.display="";return;}
-          prev.innerHTML="";prev.style.display="";
-          prev.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"700",marginBottom:"6px",color:"#334155"}},"プレビュー: "+(data.partName||"品名なし")+" / "+(data.drawingNo||"図番なし")+" / "+data.dims.length+"項目"));
-          const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"11px",background:"#fff",borderRadius:"6px",overflow:"hidden"}});
-          const thr=h("tr",{style:{background:"#334155",color:"#fff"}});
-          ["寸法","公差域","上限","中間","下限"].forEach(t=>thr.appendChild(h("th",{style:{padding:"4px 6px"}},t)));
-          tbl.appendChild(h("thead",{},thr));
-          const tbd=h("tbody",{});
-          data.dims.forEach(d=>{
-            const nom=parseFloat(d.nominal),up=parseFloat(d.upper),lo=parseFloat(d.lower);
-            const tr=h("tr",{style:{borderBottom:"1px solid #e2e8f0"}});
-            tr.appendChild(h("td",{style:{padding:"4px 6px",fontWeight:"700"}},d.name));
-            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",color:"#2563eb"}},d.tClass||"—"));
-            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",fontFamily:"monospace"}},""+r4(nom+up)));
-            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",fontFamily:"monospace",fontWeight:"700",color:"#2563eb"}},""+r4(nom+(up+lo)/2)));
-            tr.appendChild(h("td",{style:{padding:"4px 6px",textAlign:"center",fontFamily:"monospace"}},""+r4(nom+lo)));
-            tbd.appendChild(tr);
-          });tbl.appendChild(tbd);prev.appendChild(tbl);
-        }catch(e){err.textContent="JSONの解析に失敗しました";err.style.display="";}
-      }},"プレビュー"),
-      h("button",{style:{padding:"8px 24px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",color:"#64748b",fontSize:"13px",fontWeight:"600"},onClick:()=>fm.remove()},"キャンセル")
-    ));
-    document.getElementById("import-btn").after(fm);
-  }},"📋 データをインポート"));
-  if(!projects.length){app.appendChild(h("div",{style:{textAlign:"center",padding:"40px",color:"#94a3b8"}},"案件がまだありません"));return;}
-  projects.forEach(p=>{
-    const dims=p.dims||[],meas=p.meas||{};const st=dims.reduce((a,d)=>{const lv=(()=>{const ar=meas[d.id]||[];for(let i=ar.length-1;i>=0;i--)if(ar[i]!=="")return ar[i];return"";})();const j=judge(lv,d.nominal,d.upper,d.lower);if(j==="OK")a.ok++;else if(j==="NG")a.ng++;else a.none++;return a;},{ok:0,ng:0,none:0});
-    const done=st.ok+st.ng,total=dims.length;const status=total===0?"未設定":st.ng>0?"NG有り":done===total&&total>0?"完了":done>0?"進行中":"未着手";
-    const sCol={未設定:"#94a3b8",NG有り:"#dc2626",完了:"#16a34a",進行中:"#d97706",未着手:"#64748b"}[status];const sBg={未設定:"#f1f5f9",NG有り:"#fee2e2",完了:"#dcfce7",進行中:"#fef3c7",未着手:"#f1f5f9"}[status];
-    app.appendChild(h("div",{style:{background:"#fff",borderRadius:"10px",padding:"16px",marginBottom:"8px",boxShadow:"0 1px 3px rgba(0,0,0,.06)",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:"1px solid #e2e8f0"},onClick:()=>openProject(p.id)},
-      h("div",{},h("div",{style:{fontWeight:"800",fontSize:"16px",marginBottom:"4px"}},p.partName||"（品名未設定）"),h("div",{style:{fontSize:"12px",color:"#64748b",marginBottom:"2px"}},"図番: "+(p.drawingNo||"—")),h("div",{style:{fontSize:"11px",color:"#94a3b8"}},(p.date||"")+"　"+total+"項目")),
-      h("div",{style:{display:"flex",alignItems:"center",gap:"10px"}},h("div",{style:{textAlign:"right"}},h("div",{style:{fontSize:"12px",fontWeight:"700",color:sCol,background:sBg,padding:"3px 10px",borderRadius:"12px",display:"inline-block",marginBottom:"4px"}},status),total>0?h("div",{style:{fontSize:"11px",color:"#94a3b8"}},done+"/"+total):null),h("button",{style:{padding:"4px 8px",borderRadius:"4px",border:"1px solid #fca5a5",background:"#fff",fontSize:"10px",color:"#dc2626"},onClick:e=>{e.stopPropagation();if(confirm("削除しますか？")){Store.deleteProject(p.id);showList();}}},"削除"))
-    ));
+let P = null, TAB = "meas", EDIT = false, SHOWNEW = false, SHOWIMP = false, unsub = null, saveT = null;
+let NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }, IMPTEXT = "", MGTEXT = "", SHOWMERGE = false;
+
+function save(){ clearTimeout(saveT); saveT = setTimeout(() => { if (P) Store.saveProject(P); }, 400); }
+
+/* ── list ── */
+async function renderList(){
+  if (unsub){ unsub(); unsub = null; }
+  P = null;
+  const root = app();
+  root.innerHTML = "";
+  root.appendChild(h("div", { style:"background:#FFF;border-bottom:1px solid #E8EAED;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap" }, [
+    h("div", { style:"font-size:18px;font-weight:700;white-space:nowrap", text:"寸法検査ツール" }),
+    h("div", { style:"font-size:13px;color:#5F6368;white-space:nowrap", text:"案件一覧" }),
+    h("div", { style:"flex:1" }),
+    h("div", { style:"font-size:12px;font-weight:600;padding:5px 11px;border-radius:6px;white-space:nowrap;" + (isCloud() ? "background:#E6F4EA;color:#0B7A45" : "background:#FEF7E0;color:#8A6100"), text: isCloud() ? "同期" : "ローカル" }),
+    h("div", { style:"font-size:12px;color:#5F6368;" + MONO, text:VER })
+  ]));
+  const wrap = h("div", { style:"max-width:1080px;margin:0 auto;padding:16px 16px 48px" });
+  root.appendChild(wrap);
+
+  wrap.appendChild(h("div", { style:"display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap" }, [
+    h("button", { style:"flex:1;min-width:180px;min-height:52px;padding:0 18px;border:none;border-radius:12px;background:#007AFF;color:#FFF;font-size:15px;font-weight:600", text:"＋ 新しい案件",
+      onclick: () => { SHOWNEW = !SHOWNEW; SHOWIMP = false; renderList(); } }),
+    h("button", { style:"flex:1;min-width:180px;min-height:52px;padding:0 18px;border:1px solid #DADCE0;border-radius:12px;background:#FFF;color:#0062CC;font-size:15px;font-weight:600", text:"JSONから取込",
+      onclick: () => { SHOWIMP = !SHOWIMP; SHOWNEW = false; renderList(); } })
+  ]));
+
+  if (SHOWNEW){
+    const inP = h("input", { type:"text", placeholder:"CASE GEAR", value:NF.partName, style:"width:100%;min-height:44px;padding:0 12px;font-size:15px;border:1px solid #DADCE0;border-radius:10px", oninput: e => NF.partName = e.target.value });
+    const inD = h("input", { type:"text", placeholder:"0U9W-46365-00", value:NF.drawingNo, style:"width:100%;min-height:44px;padding:0 12px;font-size:15px;border:1px solid #DADCE0;border-radius:10px;" + MONO, oninput: e => NF.drawingNo = e.target.value });
+    const selP = h("select", { style:"width:100%;min-height:44px;padding:0 10px;font-size:15px;border:1px solid #DADCE0;border-radius:10px", onchange: e => NF.preset = e.target.value }, [
+      h("option", { value:"yes", text:"CASE GEAR (8項目)" }), h("option", { value:"no", text:"空 (後から追加)" })
+    ]);
+    selP.value = NF.preset;
+    const selR = h("select", { style:"width:100%;min-height:44px;padding:0 10px;font-size:15px;border:1px solid #DADCE0;border-radius:10px", onchange: e => NF.rounds = parseInt(e.target.value,10) },
+      ROUND_OPTIONS.map(n => h("option", { value:String(n), text:n + "回" })));
+    selR.value = String(NF.rounds);
+    const fld = (l, c) => h("label", { style:"display:block" }, [ h("div", { style:"font-size:12px;color:#5F6368;font-weight:600;margin-bottom:5px", text:l }), c ]);
+    wrap.appendChild(h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:16px;margin-bottom:12px" }, [
+      h("div", { style:"font-size:15px;font-weight:700;margin-bottom:12px", text:"新規案件" }),
+      h("div", { style:"display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px" }, [
+        fld("品名", inP), fld("図番", inD), fld("寸法プリセット", selP), fld("測定回数", selR)
+      ]),
+      h("div", { style:"display:flex;gap:8px" }, [
+        h("button", { style:"min-height:44px;padding:0 24px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:14px;font-weight:600", text:"作成",
+          onclick: async () => {
+            const p = newProject({ partName:NF.partName, drawingNo:NF.drawingNo, preset:NF.preset === "yes", rounds:NF.rounds });
+            await Store.saveProject(p);
+            NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }; SHOWNEW = false;
+            openProject(p.id);
+          } }),
+        h("button", { style:"min-height:44px;padding:0 24px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#5F6368;font-size:14px;font-weight:600", text:"キャンセル",
+          onclick: () => { SHOWNEW = false; renderList(); } })
+      ])
+    ]));
+  }
+
+  if (SHOWIMP){
+    const ta = h("textarea", { placeholder:'{"partName":"…","drawingNo":"…","dims":[{"name":"φ47","tClass":"P7","nominal":47,"upper":-0.017,"lower":-0.042}]}', style:"width:100%;height:130px;padding:11px;font-size:13px;line-height:1.6;border:1px solid #DADCE0;border-radius:12px;resize:vertical;" + MONO, oninput: e => IMPTEXT = e.target.value });
+    ta.value = IMPTEXT;
+    const msg = h("div", { style:"margin-top:8px;font-size:13px;font-weight:600;color:#B3261E" });
+    wrap.appendChild(h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:16px;margin-bottom:12px" }, [
+      h("div", { style:"font-size:15px;font-weight:700;margin-bottom:3px", text:"データ取込" }),
+      h("div", { style:"font-size:12px;color:#5F6368;margin-bottom:10px", text:"寸法リストのJSONを貼り付け" }),
+      ta, msg,
+      h("div", { style:"display:flex;gap:8px;margin-top:12px" }, [
+        h("button", { style:"min-height:44px;padding:0 24px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:14px;font-weight:600", text:"取込",
+          onclick: async () => {
+            try {
+              const d = parseImport(IMPTEXT);
+              const p = newProject({ partName:d.partName, drawingNo:d.drawingNo, preset:false, rounds:NF.rounds });
+              p.dims = d.dims.map((x,i) => dimFromJSON(x, i+1));
+              normalizeProject(p);
+              await Store.saveProject(p);
+              IMPTEXT = ""; SHOWIMP = false;
+              openProject(p.id);
+            } catch (err){ msg.textContent = err.message; }
+          } }),
+        h("button", { style:"min-height:44px;padding:0 24px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#5F6368;font-size:14px;font-weight:600", text:"キャンセル",
+          onclick: () => { SHOWIMP = false; renderList(); } })
+      ])
+    ]));
+  }
+
+  const holder = h("div", { style:"display:flex;flex-direction:column;gap:8px" });
+  wrap.appendChild(holder);
+  holder.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px", text:"読み込み中" }));
+
+  const list = await Store.listProjects();
+  holder.innerHTML = "";
+  if (!list.length){
+    holder.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px", text:"案件がまだありません" }));
+    return;
+  }
+  const MAP = { "未設定":["#C7C7CC","#5F6368","#F1F3F4"], "NG有り":["#D93025","#B3261E","#FCE8E6"],
+                "完了":["#0F9D58","#0B7A45","#E6F4EA"], "進行中":["#FBBC04","#8A6100","#FEF7E0"], "未着手":["#C7C7CC","#5F6368","#F1F3F4"] };
+  list.forEach(p => {
+    const st = statsOf(p.dims || [], p.meas || {}), done = st.ok + st.ng, total = (p.dims || []).length;
+    let s = "未着手";
+    if (!total) s = "未設定"; else if (st.ng > 0) s = "NG有り"; else if (done === total) s = "完了"; else if (done > 0) s = "進行中";
+    const col = MAP[s];
+    const card = h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:14px;cursor:pointer",
+      onclick: () => openProject(p.id) }, [
+      h("div", { style:"width:5px;align-self:stretch;border-radius:3px;background:" + col[0] }),
+      h("div", { style:"flex:1;min-width:0" }, [
+        h("div", { style:"font-size:17px;font-weight:700;margin-bottom:3px", text:p.partName || "（品名未設定）" }),
+        h("div", { style:"font-size:13px;color:#5F6368;" + MONO, text:p.drawingNo || "図番未設定" }),
+        h("div", { style:"font-size:12px;color:#5F6368;margin-top:3px", text:(p.date || "") + " · " + total + "項目" })
+      ]),
+      h("div", { style:"text-align:right" }, [
+        h("div", { style:"display:inline-block;font-size:12px;font-weight:700;padding:4px 10px;border-radius:6px;background:" + col[2] + ";color:" + col[1], text:s }),
+        h("div", { style:"font-size:12px;color:#5F6368;margin-top:4px;" + MONO, text: total ? done + "/" + total : "" })
+      ]),
+      h("button", { style:"width:40px;height:40px;flex-shrink:0;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#5F6368;font-size:15px", text:"削除",
+        onclick: async (e) => {
+          e.stopPropagation();
+          if (!confirm((p.partName || "この案件") + " を削除しますか")) return;
+          await Store.deleteProject(p.id); renderList();
+        } })
+    ]);
+    holder.appendChild(card);
   });
 }
-async function openProject(id){const p=await Store.getProject(id);if(!p)return;P=p;if(!P.meas)P.meas={};if(!P.dims)P.dims=[];P.dims.forEach(d=>{if(!P.meas[d.id])P.meas[d.id]=Array(ROUNDS).fill("");});view="project";tab="tracker";showEditor=false;editId=null;_form=null;if(unsub){unsub();unsub=null;}unsub=Store.onProjectSync(id,data=>{if(data&&data.updatedAt>(P.updatedAt||0)+2000){Object.assign(P,data);if(!P.meas)P.meas={};P.dims.forEach(d=>{if(!P.meas[d.id])P.meas[d.id]=Array(ROUNDS).fill("");});render();}});render();}
 
-// ═══ PROJECT ═══
-function renderProject(app){
-  // Header with editable name
-  const syncB=useFB?h("span",{style:{fontSize:"10px",padding:"3px 10px",borderRadius:"12px",fontWeight:"600",background:"#dcfce7",color:"#16a34a"}},"☁同期"):h("span",{style:{fontSize:"10px",padding:"3px 10px",borderRadius:"12px",fontWeight:"600",background:"#fef3c7",color:"#92400e"}},"📱ローカル");
-  const eBtn=tab==="tracker"?h("button",{style:{padding:"6px 14px",borderRadius:"6px",border:"none",background:showEditor?"#f59e0b":"#475569",color:"#fff",fontSize:"12px",fontWeight:"700"},onClick:()=>{showEditor=!showEditor;editId=null;_form=null;render();}},showEditor?"✕ 閉じる":"✎ 寸法編集"):null;
-
-  // Editable project info
-  const nameEl=h("div",{style:{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer"},onClick:()=>{
-    const newName=prompt("品名を入力:",P.partName||"");if(newName!==null){P.partName=newName;schedSave();render();}
-  }},h("div",{style:{fontSize:"17px",fontWeight:"800"}},P.partName||"（クリックして品名入力）"),h("span",{style:{fontSize:"11px",color:"#64748b"}},"✎"));
-  const drawEl=h("div",{style:{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer"},onClick:()=>{
-    const newDraw=prompt("図番を入力:",P.drawingNo||"");if(newDraw!==null){P.drawingNo=newDraw;schedSave();render();}
-  }},h("div",{style:{fontSize:"10px",letterSpacing:"2px",color:"#f59e0b",fontWeight:"700"}},P.drawingNo||"（図番クリックで入力）"),h("span",{style:{fontSize:"9px",color:"#64748b"}},"✎"));
-
-  app.appendChild(h("div",{className:"no-print",style:{background:"#1e293b",borderRadius:"10px",padding:"12px 16px",marginBottom:"10px",color:"#fff",display:"flex",justifyContent:"space-between",alignItems:"center"}},
-    h("div",{style:{display:"flex",alignItems:"center",gap:"12px"}},h("button",{style:{background:"none",border:"none",color:"#94a3b8",fontSize:"20px",padding:"0 4px"},onClick:()=>showList()},"←"),h("div",{},drawEl,nameEl)),
-    h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},h("span",{style:{fontSize:"10px",color:"#64748b",fontFamily:"'SF Mono','Consolas',monospace"}},VER),syncB,eBtn)));
-
-  const fc=P.dims.filter(d=>d.inReport!==false&&latest(d.id)!=="").length;
-  app.appendChild(h("div",{className:"no-print",style:{display:"flex",gap:"4px",marginBottom:"10px"}},
-    h("button",{style:{flex:"1",padding:"10px",borderRadius:"8px",border:"none",background:tab==="tracker"?"#334155":"#fff",color:tab==="tracker"?"#fff":"#64748b",fontSize:"13px",fontWeight:"700",boxShadow:tab==="tracker"?"0 2px 8px rgba(0,0,0,.15)":"0 1px 2px rgba(0,0,0,.05)"},onClick:()=>{tab="tracker";render();}},"🔧 ① 追い込み加工"),
-    h("button",{id:"tab-report",style:{flex:"1",padding:"10px",borderRadius:"8px",border:"none",background:tab==="report"?"#334155":"#fff",color:tab==="report"?"#fff":"#64748b",fontSize:"13px",fontWeight:"700",boxShadow:tab==="report"?"0 2px 8px rgba(0,0,0,.15)":"0 1px 2px rgba(0,0,0,.05)"},onClick:()=>{tab="report";render();}},"📄 ② 検査成績書"+(fc>0?` (${fc}件)`:""))
-  ));
-  if(tab==="tracker")renderTracker(app);else renderReport(app);
+async function openProject(id){
+  const p = await Store.getProject(id);
+  if (!p) return;
+  P = normalizeProject(p);
+  TAB = "meas"; EDIT = false; SHOWMERGE = false;
+  if (unsub){ unsub(); unsub = null; }
+  unsub = Store.onProjectSync(id, data => {
+    if (data && data.updatedAt > (P.updatedAt || 0) + 2000){ Object.assign(P, data); normalizeProject(P); renderProject(); }
+  });
+  renderProject();
 }
 
-function renderTracker(app){
-  // Editor - spreadsheet style
-  if(showEditor){const ed=h("div",{style:{background:"#fff",borderRadius:"10px",padding:"16px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",marginBottom:"10px"}});
-  ed.appendChild(h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px",flexWrap:"wrap",gap:"6px"}},
-    h("div",{style:{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}},
-      h("div",{style:{fontSize:"14px",fontWeight:"800"}},"寸法リスト編集"),
-      h("button",{style:{padding:"4px 12px",borderRadius:"5px",border:"none",background:"#2563eb",color:"#fff",fontSize:"11px",fontWeight:"700"},onClick:()=>{const typeOrder={"穴":0,"軸":1,"距離":2};P.dims.sort((a,b)=>{const ta=typeOrder[a.type||"穴"]||0,tb=typeOrder[b.type||"穴"]||0;if(ta!==tb)return ta-tb;return(b.nominal||0)-(a.nominal||0);});schedSave();render();}},"自動ソート（穴→軸→距離・降順）"),
-      h("button",{style:{padding:"4px 12px",borderRadius:"5px",border:"none",background:"#059669",color:"#fff",fontSize:"11px",fontWeight:"700"},onClick:()=>{
-        if(document.getElementById("merge-form"))return;
-        const mf=h("div",{id:"merge-form",style:{background:"#f0fdf4",border:"2px solid #86efac",borderRadius:"8px",padding:"12px",marginTop:"10px"}});
-        mf.appendChild(h("div",{style:{fontSize:"13px",fontWeight:"700",color:"#059669",marginBottom:"6px"}},"📋 追加インポート（既存データに追加）"));
-        mf.appendChild(h("div",{style:{fontSize:"11px",color:"#64748b",marginBottom:"8px"}},"JSONを貼り付けると、既存の寸法に追加されます"));
-        const ta=h("textarea",{placeholder:'ここにJSONを貼り付け...',style:{width:"100%",height:"100px",padding:"8px",fontSize:"12px",fontFamily:"'SF Mono','Consolas',monospace",border:"2px solid #e2e8f0",borderRadius:"6px",outline:"none",resize:"vertical",boxSizing:"border-box",background:"#fff"}});
-        mf.appendChild(ta);
-        const errEl=h("div",{style:{fontSize:"12px",color:"#dc2626",marginTop:"4px",display:"none"}});
-        mf.appendChild(errEl);
-        mf.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"8px"}},
-          h("button",{style:{padding:"6px 20px",borderRadius:"6px",border:"none",background:"#059669",color:"#fff",fontSize:"12px",fontWeight:"700"},onClick:()=>{
-            const raw=ta.value.trim();errEl.style.display="none";
-            try{const data=JSON.parse(raw);
-              if(!data.dims||!Array.isArray(data.dims)||data.dims.length===0){errEl.textContent="寸法データ(dims)がありません";errEl.style.display="";return;}
-              let maxId=Math.max(0,...P.dims.map(d=>d.id));
-              data.dims.forEach(d=>{if(d.nominal==null||d.upper==null||d.lower==null)return;
-                maxId++;const nm=d.name||((d.type||"穴")==="距離"?""+d.nominal:"φ"+d.nominal);
-                P.dims.push({id:maxId,name:nm,tClass:d.tClass||"",nominal:parseFloat(d.nominal),upper:parseFloat(d.upper),lower:parseFloat(d.lower),type:d.type||"穴",qty:parseInt(d.qty,10)>1?parseInt(d.qty,10):1,inReport:d.inReport!==false,method:d.method||"",toolNo:d.toolNo||"",jobNo:d.jobNo||""});
-                P.meas[maxId]=Array(ROUNDS).fill("");});
-              schedSave();mf.remove();render();
-            }catch(e){errEl.textContent="JSONの解析に失敗: "+e.message;errEl.style.display="";}
-          }},"追加（"+P.dims.length+"件に追加）"),
-          h("button",{style:{padding:"6px 20px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",color:"#64748b",fontSize:"12px",fontWeight:"600"},onClick:()=>mf.remove()},"キャンセル")
-        ));
-        ed.insertBefore(mf,ed.children[1]);
-      }},"📋 追加インポート")
-    ),
-    h("button",{style:{padding:"4px 14px",borderRadius:"6px",border:"2px solid #e2e8f0",background:"#fff",fontSize:"12px",fontWeight:"600",color:"#64748b"},onClick:()=>{showEditor=false;editId=null;render();}},"閉じる")
-  ));
-  // Spreadsheet table
-  const stbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px",borderSpacing:"0"}});
-  const sthr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"10px",fontWeight:"600",position:"sticky",top:"0",zIndex:"1"}});
-  [{t:"No.",w:"28px"},{t:"種別",w:"48px"},{t:"公称値",w:"60px"},{t:"記号",w:"48px"},{t:"等級",w:"40px"},{t:"個数",w:"48px"},{t:"上偏差",w:"64px"},{t:"下偏差",w:"64px"},{t:"加工方法",w:"72px"},{t:"工具No.",w:"64px"},{t:"Job",w:"50px"},{t:"",w:"28px"}].forEach(c=>sthr.appendChild(h("th",{style:{padding:"8px 4px",textAlign:"center",width:c.w}},c.t)));
-  stbl.appendChild(h("thead",{},sthr));
-  const stbd=h("tbody",{});
-  const inpS={width:"100%",padding:"8px 4px",fontSize:"13px",fontFamily:"'SF Mono','Consolas',monospace",textAlign:"center",border:"1px solid #cbd5e1",borderRadius:"5px",outline:"none",background:"#fff",boxSizing:"border-box",minHeight:"38px",color:"#1e293b"};
-  P.dims.forEach((d,idx)=>{
-    const row=h("tr",{className:"ed-row",style:{borderBottom:"1px solid #e2e8f0",background:idx%2===0?"#ffffff":"#e2e8f0"}});
-    row.appendChild(h("td",{style:{padding:"8px 4px",textAlign:"center",fontSize:"12px",color:"#64748b",fontWeight:"600"}},(idx+1)+"."));
-    // Type dropdown
-    const typeColors3={"穴":"#2563eb","軸":"#dc2626","距離":"#64748b"};
-    const tSel=h("select",{className:"ed-select",style:{fontSize:"12px",padding:"8px 2px",border:"1px solid #cbd5e1",borderRadius:"5px",fontFamily:"inherit",background:"#fff",cursor:"pointer",fontWeight:"700",width:"100%",minHeight:"38px"}});
-    ["穴","軸","距離"].forEach(t=>{const o=h("option",{value:t},t);if(d.type===t)o.selected=true;tSel.appendChild(o);});
-    tSel.style.color=typeColors3[d.type||"穴"]||"#334155";
-    tSel.addEventListener("change",e=>{d.type=e.target.value;d.name=(d.type==="距離"?"":"φ")+d.nominal;if(d.type==="距離"){d.tClass="";}tSel.style.color=typeColors3[e.target.value]||"#334155";schedSave();render();});
-    row.appendChild(h("td",{style:{padding:"8px 4px",textAlign:"center"}},tSel));
-    // Nominal
-    const nomInp=h("input",{type:"number",step:"any",value:d.nominal,className:"ed-input",style:{...inpS,fontWeight:"700"}});
-    nomInp.addEventListener("change",e=>{const v=parseFloat(e.target.value);if(isNaN(v))return;d.nominal=v;d.name=(d.type==="距離"?"":"φ")+v;
-      const res=lookupFit(d.tClass,v);if(res){d.upper=res[0];d.lower=res[1];render();}else{schedSave();render();}});
-    nomInp.addEventListener("focus",e=>e.target.select());
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},nomInp));
-    // Letter dropdown
-    const holeLetters=["","H","G","F","E","D","C","B","A","JS","J","K","M","N","P","R","S","T","U","X","Z","ZA","ZB","ZC"];
-    const shaftLetters=["","h","g","f","e","d","c","b","a","js","j","k","m","n","p","r","s"];
-    const curLetter=(d.tClass||"").replace(/[0-9]/g,"");
-    const curGrade=(d.tClass||"").replace(/[^0-9]/g,"");
-    const isHoleType=(d.type||"穴")!=="軸";
-    const letters=(d.type==="距離")?[""]:isHoleType?holeLetters:shaftLetters;
-    const selS={fontSize:"12px",padding:"8px 2px",border:"1px solid #cbd5e1",borderRadius:"5px",fontFamily:"inherit",background:"#fff",cursor:"pointer",width:"100%",minHeight:"38px",color:"#1e293b"};
-    const ltSel=h("select",{className:"ed-select",style:selS});
-    letters.forEach(l=>{const o=h("option",{value:l},l||"—");if(l===curLetter)o.selected=true;ltSel.appendChild(o);});
-    ltSel.addEventListener("change",e=>{const g=grSel.value;d.tClass=e.target.value+(g||"");
-      const res=lookupFit(d.tClass,d.nominal);if(res){d.upper=res[0];d.lower=res[1];}schedSave();render();});
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},ltSel));
-    // Grade dropdown
-    const grSel=h("select",{className:"ed-select",style:selS});
-    const grades=(d.type==="距離")?[""]:["","5","6","7","8","9","10","11"];
-    grades.forEach(g=>{const o=h("option",{value:g},g||"—");if(g===curGrade)o.selected=true;grSel.appendChild(o);});
-    grSel.addEventListener("change",e=>{const l=ltSel.value;d.tClass=l+(e.target.value||"");
-      const res=lookupFit(d.tClass,d.nominal);if(res){d.upper=res[0];d.lower=res[1];}schedSave();render();});
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},grSel));
-    // Qty
-    const qtyInp=h("input",{type:"number",min:"1",step:"1",value:(d.qty&&d.qty>1)?d.qty:"",placeholder:"1",className:"ed-input",style:{...inpS,fontSize:"12px",textAlign:"center"}});
-    qtyInp.addEventListener("change",e=>{const v=parseInt(e.target.value,10);d.qty=(!isNaN(v)&&v>1)?v:1;schedSave();render();});
-    qtyInp.addEventListener("focus",e=>e.target.select());
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},qtyInp));
-    // Upper deviation
-    const upInp=h("input",{type:"number",step:"any",value:d.upper,className:"ed-input",style:{...inpS,color:"#15803d"}});
-    upInp.addEventListener("change",e=>{const v=parseFloat(e.target.value);if(!isNaN(v)){d.upper=v;schedSave();}});
-    upInp.addEventListener("focus",e=>e.target.select());
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},upInp));
-    // Lower deviation
-    const loInp=h("input",{type:"number",step:"any",value:d.lower,className:"ed-input",style:{...inpS,color:"#b91c1c"}});
-    loInp.addEventListener("change",e=>{const v=parseFloat(e.target.value);if(!isNaN(v)){d.lower=v;schedSave();}});
-    loInp.addEventListener("focus",e=>e.target.select());
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},loInp));
-    // Method dropdown
-    const methods=["","ボア","コンタ","リーマ","ドリル","ガンドリル"];
-    const mtSel=h("select",{className:"ed-select",style:{...selS,fontSize:"11px"}});
-    methods.forEach(m=>{const o=h("option",{value:m},m||"—");if(m===(d.method||""))o.selected=true;mtSel.appendChild(o);});
-    mtSel.addEventListener("change",e=>{d.method=e.target.value;schedSave();});
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},mtSel));
-    // Tool No. (T prefix)
-    const rawToolNo=(d.toolNo||"").replace(/^T/i,"");
-    const tnInp=h("input",{type:"text",value:rawToolNo,placeholder:"—",className:"ed-input",style:{...inpS,fontSize:"12px"}});
-    tnInp.addEventListener("change",e=>{const v=e.target.value.trim().replace(/^T/i,"");d.toolNo=v?"T"+v:"";schedSave();});
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},tnInp));
-    // Job No.
-    const jobInp=h("input",{type:"text",value:d.jobNo||"",placeholder:"—",className:"ed-input",style:{...inpS,fontSize:"12px"}});
-    jobInp.addEventListener("change",e=>{d.jobNo=e.target.value.trim();schedSave();});
-    row.appendChild(h("td",{style:{padding:"8px 4px"}},jobInp));
-    // Delete
-    row.appendChild(h("td",{style:{padding:"8px 4px",textAlign:"center"}},h("button",{style:{padding:"6px 8px",borderRadius:"4px",border:"1px solid #fca5a5",background:"#fff",fontSize:"13px",color:"#dc2626",cursor:"pointer",lineHeight:"1",minWidth:"32px",minHeight:"32px"},onClick:()=>{if(!confirm((idx+1)+". "+dName(d)+" を削除？"))return;P.dims=P.dims.filter(x=>x.id!==d.id);delete P.meas[d.id];schedSave();render();}},"×")));
-    stbd.appendChild(row);
+/* ── project shell ── */
+function renderProject(){
+  const root = app();
+  root.innerHTML = "";
+  const shell = h("div", { style:"height:100dvh;display:flex;flex-direction:column;overflow:hidden" });
+  root.appendChild(shell);
+
+  const inP = h("input", { type:"text", placeholder:"品名を入力", value:P.partName || "", style:"display:block;width:100%;border:none;background:transparent;font-size:15px;font-weight:700;padding:1px 3px", oninput: e => { P.partName = e.target.value; save(); } });
+  const inD = h("input", { type:"text", placeholder:"図番を入力", value:P.drawingNo || "", style:"display:block;width:100%;border:none;background:transparent;font-size:12px;color:#5F6368;padding:1px 3px;" + MONO, oninput: e => { P.drawingNo = e.target.value; save(); } });
+  const tabBtn = (label, key) => h("button", { style:"height:34px;padding:0 14px;border:none;border-radius:8px;font-size:13px;font-weight:600;" + (TAB === key ? "background:#FFF;color:#0062CC" : "background:transparent;color:#5F6368"), text:label,
+    onclick: () => { TAB = key; renderProject(); } });
+  const repCount = P.dims.filter(d => d.inReport !== false && latestOf(P.meas, d.id) !== "").length;
+
+  shell.appendChild(h("div", { class:"no-print", style:"flex-shrink:0;background:#FFF;border-bottom:1px solid #E8EAED;padding:5px 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap" }, [
+    h("button", { style:"width:36px;height:36px;flex-shrink:0;border:1px solid #DADCE0;border-radius:10px;background:#FFF;font-size:16px", text:"←", onclick: renderList }),
+    h("div", { style:"min-width:180px" }, [ inP, inD ]),
+    h("div", { style:"flex:1" }),
+    h("div", { style:"display:flex;background:#F1F3F4;border-radius:11px;padding:3px;gap:3px" }, [
+      tabBtn("測定", "meas"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
+    ]),
+    h("div", { style:"font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;" + (isCloud() ? "background:#E6F4EA;color:#0B7A45" : "background:#FEF7E0;color:#8A6100"), text: isCloud() ? "同期" : "ローカル" })
+  ]));
+
+  const body = h("div", { style:"flex:1;min-height:0;overflow-y:auto;padding:8px 6px 24px" });
+  shell.appendChild(body);
+  if (TAB === "meas") renderMeas(body); else renderReport(body);
+}
+
+/* ── measurement view ── */
+function renderMeas(body){
+  const metaIn = (label, key, type, w) => {
+    const i = h("input", { type:type, value:P[key] || "", style:"width:" + w + ";border:none;border-bottom:1px solid #DADCE0;background:transparent;font-size:14px;font-weight:600;padding:2px", oninput: e => { P[key] = e.target.value; save(); } });
+    return h("label", { style:"display:flex;align-items:baseline;gap:5px" }, [ h("span", { style:"font-size:11px;color:#5F6368;font-weight:600;white-space:nowrap", text:label }), i ]);
+  };
+  const selR = h("select", { style:"border:none;border-bottom:1px solid #DADCE0;background:transparent;font-size:14px;font-weight:600;padding:2px 0", onchange: e => {
+    P.rounds = Math.min(MAX_ROUNDS, Math.max(1, parseInt(e.target.value,10)));
+    P.dims.forEach(d => { const a = P.meas[d.id] || []; while (a.length < P.rounds) a.push(""); P.meas[d.id] = a; });
+    save(); renderProject();
+  } }, ROUND_OPTIONS.map(n => h("option", { value:String(n), text:n + "回" })));
+  selR.value = String(P.rounds);
+
+  const st = statsOf(P.dims, P.meas);
+  const sumCell = (key, label, count, bg, fg) => h("div", { style:"display:flex;align-items:baseline;gap:5px;background:" + bg + ";border-radius:8px;padding:3px 9px" }, [
+    h("span", { style:"font-size:11px;font-weight:600;white-space:nowrap;color:" + fg, text:label }),
+    h("span", { "data-sum":key, style:"font-size:15px;font-weight:800;line-height:1.1;color:" + fg + ";" + MONO, text:String(count) })
+  ]);
+
+  body.appendChild(h("div", { style:"display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#FFF;border:1px solid #DADCE0;border-radius:12px;padding:5px 8px;margin-bottom:6px" }, [
+    metaIn("加工日", "date", "date", "116px"), metaIn("作業者", "inspector", "text", "82px"), metaIn("S/N", "serial", "text", "82px"),
+    h("label", { style:"display:flex;align-items:baseline;gap:5px" }, [ h("span", { style:"font-size:11px;color:#5F6368;font-weight:600", text:"回数" }), selR ]),
+    h("div", { style:"width:1px;height:22px;background:#E8EAED" }),
+    sumCell("total", "全項目", P.dims.length, "#F1F3F4", "#202124"),
+    sumCell("ok", "OK", st.ok, "#E6F4EA", "#0B7A45"),
+    sumCell("ng", "NG", st.ng, "#FCE8E6", "#B3261E"),
+    sumCell("none", "未測定", st.none, "#FFF", "#5F6368"),
+    h("div", { style:"flex:1" }),
+    h("button", { style:"height:32px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;" + (EDIT ? "border:1px solid #007AFF;background:#E1F0FF;color:#0062CC" : "border:1px solid #DADCE0;background:#FFF;color:#202124"), text: EDIT ? "編集を閉じる" : "寸法編集",
+      onclick: () => { EDIT = !EDIT; renderProject(); } })
+  ]));
+
+  if (EDIT) body.appendChild(buildEditor());
+  body.appendChild(buildTable());
+  body.appendChild(h("div", { style:"display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap" }, [
+    h("button", { style:"height:40px;padding:0 16px;border:1px solid #DADCE0;border-radius:12px;background:#FFF;font-size:13px;font-weight:600", text:"工具セッティングシート出力",
+      onclick: () => { if (!P.dims.some(d => (d.type || "穴") === "穴")){ alert("穴の寸法がありません"); return; } downloadToolSheet(P); } }),
+    h("button", { style:"height:40px;padding:0 16px;border:1px solid #DADCE0;border-radius:12px;background:#FFF;color:#5F6368;font-size:13px;font-weight:600", text:"測定値をクリア",
+      onclick: () => {
+        if (!confirm("測定値を全てクリアしますか")) return;
+        P.dims.forEach(d => P.meas[d.id] = emptyRounds(P.rounds));
+        P.serial = ""; save(); renderProject();
+      } })
+  ]));
+}
+
+const PIN = [
+  { w:32, label:"報", align:"center" },
+  { w:52, label:"種別", align:"center" },
+  { w:118, label:"寸法", align:"left" },
+  { w:70, label:"公差", align:"center" },
+  { w:80, label:"上限 / 下限", align:"center" },
+  { w:70, label:"狙い値", align:"center" }
+];
+
+function buildTable(){
+  const wrap = h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;overflow:auto" });
+  if (!P.dims.length){
+    wrap.appendChild(h("div", { style:"text-align:center;padding:48px 16px;color:#5F6368;font-size:14px", text:"寸法が登録されていません。「寸法編集」から追加してください。" }));
+    return wrap;
+  }
+  const table = h("table", { style:"border-collapse:separate;border-spacing:0;width:100%" });
+  wrap.appendChild(table);
+
+  // header
+  const trh = h("tr");
+  let left = 0;
+  PIN.forEach((c, i) => {
+    trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;left:" + left + "px;top:0;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;" + (i === PIN.length-1 ? "border-right:2px solid #E8EAED;" : "") + "padding:5px;font-size:11px;font-weight:600;color:#5F6368;text-align:" + c.align + ";width:" + c.w + "px;min-width:" + c.w + "px;max-width:" + c.w + "px", text:c.label }));
+    left += c.w;
   });
-  stbl.appendChild(stbd);
-  ed.appendChild(h("div",{style:{overflowX:"auto"}},stbl));
-  // Add new row
-  ed.appendChild(h("button",{style:{width:"100%",padding:"8px",borderRadius:"6px",border:"2px dashed #d1d5db",background:"transparent",fontSize:"13px",fontWeight:"600",color:"#64748b",marginTop:"8px"},onClick:()=>{
-    const nid=Math.max(0,...P.dims.map(d=>d.id))+1;
-    P.dims.push({id:nid,name:"φ0",tClass:"",nominal:0,upper:0,lower:0,type:"穴",qty:1,inReport:true,method:"",toolNo:"",jobNo:""});
-    P.meas[nid]=Array(ROUNDS).fill("");schedSave();render();
-  }},"＋ 寸法を追加"));
-  app.appendChild(ed);}
+  for (let i = 0; i < P.rounds; i++)
+    trh.appendChild(h("th", { style:"position:sticky;top:0;z-index:10;background:#FFF;border-bottom:2px solid #E8EAED;padding:5px 3px;font-size:11px;font-weight:600;color:#5F6368;min-width:81px", text:(i+1) + "回目" }));
+  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:44px;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;border-left:2px solid #E8EAED;padding:5px 6px;font-size:11px;font-weight:600;color:#5F6368;width:96px;min-width:96px;max-width:96px", text:"状態" }));
+  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:0;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;padding:5px 4px;font-size:11px;font-weight:600;color:#5F6368;width:44px;min-width:44px;max-width:44px", text:"判定" }));
+  table.appendChild(h("thead", null, [trh]));
 
-  // Info row
-  const info=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"10px"}});
-  [{l:"加工日",k:"date",t:"date"},{l:"作業者",k:"inspector",t:"text",p:"氏名"},{l:"S/N",k:"serial",t:"text",p:"シリアルNo."}].forEach(f=>{
-    const inp=h("input",{type:f.t,value:P[f.k]||"",placeholder:f.p||"",style:{width:"100%",border:"none",borderBottom:"2px solid #e2e8f0",fontSize:"14px",padding:"2px 0",outline:"none",background:"transparent",fontFamily:"inherit",color:"#334155",boxSizing:"border-box"}});
-    // NO render on input - just save
-    inp.addEventListener("input",e=>{P[f.k]=e.target.value;schedSave();});
-    info.appendChild(h("div",{style:{background:"#fff",borderRadius:"8px",padding:"8px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.05)"}},h("div",{style:{fontSize:"10px",color:"#94a3b8",fontWeight:"600",marginBottom:"2px"}},f.l),inp));
-  });app.appendChild(info);
+  const tbody = h("tbody");
+  table.appendChild(tbody);
+  P.dims.forEach(dim => tbody.appendChild(buildRow(dim)));
+  return wrap;
+}
 
-  // Summary
-  const st=P.dims.reduce((a,d)=>{const j=judge(latest(d.id),d.nominal,d.upper,d.lower);if(j==="OK")a.ok++;else if(j==="NG")a.ng++;else a.none++;return a;},{ok:0,ng:0,none:0});
-  const sm=h("div",{style:{display:"flex",gap:"6px",marginBottom:"10px"}});
-  [{l:"全項目",c:P.dims.length,id:"sum-total",bg:"#e2e8f0",fg:"#334155"},{l:"OK",c:st.ok,id:"sum-ok",bg:"#dcfce7",fg:"#16a34a"},{l:"NG",c:st.ng,id:"sum-ng",bg:"#fee2e2",fg:"#dc2626"},{l:"未測定",c:st.none,id:"sum-none",bg:"#f1f5f9",fg:"#94a3b8"}].forEach(i=>{
-    sm.appendChild(h("div",{style:{flex:"1",background:i.bg,borderRadius:"8px",padding:"6px 8px",textAlign:"center"}},h("span",{style:{fontSize:"10px",color:i.fg,fontWeight:"600"}},i.l),h("span",{id:i.id,style:{fontSize:"16px",fontWeight:"800",color:i.fg,marginLeft:"4px"}},""+i.c)));
-  });app.appendChild(sm);
+function buildRow(dim){
+  const tr = h("tr", { "data-row":String(dim.id) });
+  const type = dim.type || "穴";
+  const bgOf = () => { const j = judgeDim(dim, latestOf(P.meas, dim.id)); return j === "NG" ? "#FFF7F6" : "#FFF"; };
+  const bg = bgOf();
+  let left = 0;
+  const pinTd = (i, style, kids) => {
+    const c = PIN[i];
+    const td = h("td", { "data-pin":"1", style:"position:sticky;left:" + left + "px;z-index:6;background:" + bg + ";border-bottom:1px solid #E8EAED;" + (i === PIN.length-1 ? "border-right:2px solid #E8EAED;" : "") + "width:" + c.w + "px;min-width:" + c.w + "px;max-width:" + c.w + "px;" + style }, kids);
+    left += c.w;
+    return td;
+  };
 
-  // Measurement table
-  const tw=h("div",{style:{background:"#fff",borderRadius:"10px",boxShadow:"0 1px 4px rgba(0,0,0,.08)",overflow:"auto"}});
-  const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px",minWidth:"780px"}});
-  const thr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"11px",fontWeight:"600"}});
-  [{t:"📄",a:"center",w:"32px"},{t:"種別",a:"center",w:"52px"},{t:"寸法",a:"left",w:"150px"},{t:"公差",a:"center",w:"70px"},{t:"上限 / 下限",a:"center",w:"80px"},{t:"中間値",a:"center",w:"70px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:c.a,width:c.w}},c.t)));
-  for(let i=0;i<ROUNDS;i++)thr.appendChild(h("th",{style:{padding:"7px 3px",textAlign:"center",minWidth:"85px"}},(i+1)+"回目"));
-  thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"100px"}},"状態"));
-  thr.appendChild(h("th",{style:{padding:"7px 4px",textAlign:"center",width:"44px"}},"判定"));
-  tbl.appendChild(h("thead",{},thr));
-  const tbd=h("tbody",{});
+  tr.appendChild(pinTd(0, "padding:4px 2px;text-align:center", [
+    h("input", { type:"checkbox", checked: dim.inReport !== false, style:"width:18px;height:18px", onchange: e => { dim.inReport = e.target.checked; save(); } })
+  ]));
 
-  P.dims.forEach(dim=>{
-    const arr=P.meas[dim.id]||Array(ROUNDS).fill("");
-    const lv=latest(dim.id);const j=judge(lv,dim.nominal,dim.upper,dim.lower);
-    const tr=h("tr",{id:`row-${dim.id}`,style:{borderBottom:"1px solid #f1f5f9",background:j==="NG"?"#fef2f2":"transparent"}});
-    // Report checkbox
-    if(dim.inReport===undefined)dim.inReport=true;
-    const chk=h("input",{type:"checkbox",style:{cursor:"pointer",width:"16px",height:"16px"}});
-    chk.checked=dim.inReport;
-    chk.addEventListener("change",e=>{dim.inReport=e.target.checked;schedSave();});
-    tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},chk));
-    // Type dropdown
-    const typeSel=h("select",{style:{fontSize:"11px",padding:"2px 4px",border:"1px solid #d1d5db",borderRadius:"4px",fontFamily:"inherit",background:"#f8fafc",color:"#334155",cursor:"pointer"}});
-    const typeColors={"穴":"#2563eb","軸":"#dc2626","距離":"#64748b"};
-    ["穴","軸","距離"].forEach(t=>{const o=h("option",{value:t},t);if(dim.type===t)o.selected=true;typeSel.appendChild(o);});
-    if(!dim.type)dim.type="穴";
-    typeSel.value=dim.type||"穴";
-    typeSel.style.color=typeColors[typeSel.value]||"#334155";
-    typeSel.style.fontWeight="700";
-    typeSel.addEventListener("change",e=>{dim.type=e.target.value;typeSel.style.color=typeColors[e.target.value]||"#334155";schedSave();});
-    tr.appendChild(h("td",{style:{padding:"4px 2px",textAlign:"center"}},typeSel));
-    const ntd=h("td",{style:{padding:"7px 6px",whiteSpace:"nowrap"}},h("span",{style:{fontWeight:"800",fontSize:"15px",verticalAlign:"middle"}},dim.name));
-    if(dim.tClass)ntd.appendChild(h("span",{style:{fontSize:"14px",fontWeight:"700",background:"#dbeafe",color:"#1d4ed8",padding:"1px 6px",borderRadius:"4px",marginLeft:"5px",display:"inline-block",verticalAlign:"middle"}},dim.tClass));
-    if(dim.qty&&dim.qty>1)ntd.appendChild(h("span",{style:{fontSize:"13px",fontWeight:"700",background:"#f1f5f9",color:"#475569",border:"1px solid #cbd5e1",padding:"1px 6px",borderRadius:"4px",marginLeft:"5px",display:"inline-block",verticalAlign:"middle"}},"×"+dim.qty));
-    const tjParts=[];if(dim.method)tjParts.push(dim.method);if(dim.toolNo)tjParts.push(dim.toolNo);if(dim.jobNo)tjParts.push("J:"+dim.jobNo);
-    if(tjParts.length)ntd.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"600",color:"#475569",marginTop:"3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},tjParts.join(" / ")));
-    tr.appendChild(ntd);
-    tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",lineHeight:"1.6"}},
-      h("div",{style:{color:"#16a34a",fontWeight:"600"}},fmtTol(dim.upper)),
-      h("div",{style:{color:"#dc2626",fontWeight:"600"}},fmtTol(dim.lower))
-    ));
-    tr.appendChild(h("td",{style:{padding:"4px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"11px",fontWeight:"700",lineHeight:"1.6"}},
-      h("div",{style:{color:"#334155"}},""+uLim(dim)),
-      h("div",{style:{color:"#94a3b8"}},""+lLim(dim))
-    ));
-    tr.appendChild(h("td",{style:{padding:"7px 4px",textAlign:"center",fontFamily:"monospace",fontSize:"13px",fontWeight:"800",color:"#2563eb",background:"#eff6ff"}},""+midLim(dim)));
+  const selT = h("select", { style:"width:100%;height:34px;padding:0 1px;font-size:12px;font-weight:700;text-align:center;border:1px solid #DADCE0;border-radius:8px;background:" + TYPE_TINT[type] + ";color:" + TYPE_TEXT[type],
+    onchange: e => { dim.type = e.target.value; dim.name = (dim.type === "距離" ? "" : "φ") + dim.nominal; if (dim.type === "距離") dim.tClass = ""; const r = lookupFit(dim.tClass, dim.nominal); if (r){ dim.upper = r[0]; dim.lower = r[1]; } save(); renderProject(); } },
+    ["穴","軸","距離"].map(t => h("option", { value:t, text:t })));
+  selT.value = type;
+  tr.appendChild(pinTd(1, "padding:4px 3px", [selT]));
 
-    for(let ri=0;ri<ROUNDS;ri++){
-      const td=h("td",{style:{padding:"3px 2px",textAlign:"center"}});
-      const v=arr[ri]||"";
-      const rj=judge(v,dim.nominal,dim.upper,dim.lower);
-      const inp=h("input",{type:"number",step:"0.001",value:v,placeholder:"—",style:{width:"100%",padding:"6px 3px",fontSize:"14px",fontWeight:"700",fontFamily:"'SF Mono','Consolas',monospace",textAlign:"center",border:`2px solid ${rj==="NG"?"#fca5a5":"#d1d5db"}`,borderRadius:"5px",outline:"none",background:rj==="NG"?"#fff5f5":"#f8fafc",boxSizing:"border-box",color:"#1e293b"}});
-      inp.setAttribute("data-dim",dim.id);inp.setAttribute("data-ri",ri);
+  const nameRow = h("div", { style:"display:flex;align-items:baseline;gap:5px" }, [
+    h("span", { style:"font-size:15px;font-weight:800", text:dim.name }),
+    dim.tClass ? h("span", { style:"font-size:12px;font-weight:700;padding:1px 5px;border-radius:6px;background:#E1F0FF;color:#0062CC", text:dim.tClass }) : null,
+    dim.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368", text:"×" + dim.qty }) : null
+  ]);
+  const tags = [];
+  if (dim.method) tags.push(dim.method);
+  if (dim.toolNo) tags.push(dim.toolNo);
+  if (dim.jobNo) tags.push("J:" + dim.jobNo);
+  tr.appendChild(pinTd(2, "padding:5px 6px;white-space:nowrap;overflow:hidden", [
+    nameRow,
+    tags.length ? h("div", { style:"margin-top:2px;font-size:11px;color:#5F6368;font-weight:600;overflow:hidden;text-overflow:ellipsis", text:tags.join(" / ") }) : null
+  ]));
 
-      // KEY FIX: Don't call render() on input - just update state and partial UI
-      inp.addEventListener("input",e=>{
-        if(!P.meas[dim.id])P.meas[dim.id]=Array(ROUNDS).fill("");
-        P.meas[dim.id][ri]=e.target.value;
-        schedSave();
-        updateRowUI(dim.id);
-      });
-      inp.addEventListener("focus",e=>{e.target.style.borderColor="#3b82f6";e.target.select();});
-      inp.addEventListener("keydown",e=>{
-        if(e.key==="Enter"){e.preventDefault();
-          const nx=document.querySelector(`[data-dim="${dim.id}"][data-ri="${ri+1}"]`);
-          if(nx)nx.focus();
-          else{const ids=P.dims.map(d=>d.id);const idx=ids.indexOf(dim.id);if(idx<ids.length-1){const nxt=document.querySelector(`[data-dim="${ids[idx+1]}"][data-ri="0"]`);if(nxt)nxt.focus();}}
-        }
-      });
-      td.appendChild(inp);
+  tr.appendChild(pinTd(3, "padding:4px 8px 4px 4px;text-align:right;font-size:11px;line-height:1.55;" + MONO, [
+    h("div", { style:"color:#0B7A45;font-weight:700", text:fmtTol(dim.upper) }),
+    h("div", { style:"color:#B3261E;font-weight:700", text:fmtTol(dim.lower) })
+  ]));
+  tr.appendChild(pinTd(4, "padding:4px 8px 4px 4px;text-align:right;font-size:12px;line-height:1.55;" + MONO, [
+    h("div", { style:"color:#202124;font-weight:700", text:String(uLim(dim)) }),
+    h("div", { style:"color:#5F6368;font-weight:700", text:String(lLim(dim)) })
+  ]));
+  const midTd = pinTd(5, "padding:4px 6px;text-align:center", [
+    h("div", { style:"font-size:14px;font-weight:800;color:#0062CC;" + MONO, text:String(midLim(dim)) })
+  ]);
+  midTd.setAttribute("data-mid", "1");
+  midTd.style.background = bg === "#FFF" ? "#F7FAFF" : bg;
+  tr.appendChild(midTd);
 
-      // Deviation display
-      const devDiv=h("div",{id:`dev-${dim.id}-${ri}`,style:{fontSize:"9px",marginTop:"1px",fontFamily:"monospace",display:v?"":"none"}});
-      if(v!==""){const mid=midLim(dim);const dv=r4(parseFloat(v)-mid);devDiv.textContent="("+(dv>0?"+":"")+dv+")";devDiv.style.color=rj==="OK"?"#16a34a":"#dc2626";}
-      td.appendChild(devDiv);
-      tr.appendChild(td);
+  const arr = P.meas[dim.id] || [];
+  for (let ri = 0; ri < P.rounds; ri++){
+    const val = arr[ri] || "", rj = judgeDim(dim, val), dv = devOf(dim, val);
+    const inp = h("input", { type:"number", step:"0.001", inputmode:"decimal", placeholder:"—", value:val,
+      "data-cell": dim.id + "-" + ri,
+      style:"width:100%;height:38px;padding:0 3px;font-size:15px;font-weight:700;text-align:center;border-radius:9px;" + MONO +
+            ";border:2px solid " + (rj === "NG" ? "#D93025" : rj === "OK" ? "#A8DCC0" : "#DADCE0") +
+            ";background:" + (rj === "NG" ? "#FCE8E6" : "#FFF") + ";color:" + (rj === "NG" ? "#B3261E" : "#202124"),
+      onfocus: e => e.target.select(),
+      oninput: e => {
+        if (!P.meas[dim.id]) P.meas[dim.id] = emptyRounds(P.rounds);
+        P.meas[dim.id][ri] = e.target.value;
+        save(); patchRow(dim);
+      } });
+    const dev = h("div", { "data-dev": dim.id + "-" + ri, style:"height:" + (dv == null ? "0" : "13") + "px;font-size:10px;font-weight:700;" + MONO + ";color:" + (rj === "OK" ? "#0B7A45" : "#B3261E"), text: dv == null ? "" : "(" + fmtDev(dv) + ")" });
+    tr.appendChild(h("td", { style:"background:" + bg + ";border-bottom:1px solid #E8EAED;padding:4px 3px;text-align:center" }, [inp, dev]));
+  }
+
+  const lv = latestOf(P.meas, dim.id), j = judgeDim(dim, lv), g = barGeom(dim, lv) || { tL:0, tW:100, pos:null, ok:false };
+  const dot = h("div", { "data-dot":String(dim.id), style:"position:absolute;top:-3px;width:15px;height:15px;border-radius:50%;border:3px solid #FFF;transform:translateX(-50%);box-shadow:0 2px 8px rgba(0,0,0,.28);display:" + (g.pos == null ? "none" : "block") + ";left:" + (g.pos == null ? 0 : g.pos) + "%;background:" + (g.ok ? "#0F9D58" : "#D93025") });
+  tr.appendChild(h("td", { "data-pin":"1", style:"position:sticky;right:44px;z-index:6;background:" + bg + ";border-bottom:1px solid #E8EAED;border-left:2px solid #E8EAED;padding:5px 6px;width:96px;min-width:96px;max-width:96px" }, [
+    h("div", { style:"position:relative;height:10px;border-radius:5px;background:#FCE8E6" }, [
+      h("div", { style:"position:absolute;top:0;bottom:0;border-radius:5px;background:#E6F4EA;left:" + g.tL + "%;width:" + g.tW + "%" }), dot
+    ]),
+    h("div", { style:"display:flex;justify-content:space-between;gap:4px;margin-top:3px;font-size:10px;font-weight:700;color:#5F6368;overflow:hidden;" + MONO }, [
+      h("span", { text:String(lLim(dim)) }), h("span", { text:String(uLim(dim)) })
+    ])
+  ]));
+  tr.appendChild(h("td", { "data-pin":"1", style:"position:sticky;right:0;z-index:6;background:" + bg + ";border-bottom:1px solid #E8EAED;padding:4px 2px;text-align:center;width:44px;min-width:44px;max-width:44px" }, [
+    h("span", { "data-judge":String(dim.id), style:"display:inline-block;min-width:36px;padding:4px 3px;border-radius:6px;font-size:12px;font-weight:800;background:" + (j === "OK" ? "#E6F4EA" : j === "NG" ? "#FCE8E6" : "#F1F3F4") + ";color:" + (j === "OK" ? "#0B7A45" : j === "NG" ? "#B3261E" : "#5F6368"), text: j || "—" })
+  ]));
+  return tr;
+}
+
+/* one row only — never a full re-render (this is what keeps typing fast) */
+function patchRow(dim){
+  const q = s => document.querySelector(s);
+  const arr = P.meas[dim.id] || [];
+  for (let i = 0; i < P.rounds; i++){
+    const v = arr[i] || "", rj = judgeDim(dim, v), dv = devOf(dim, v);
+    const dev = q('[data-dev="' + dim.id + "-" + i + '"]');
+    if (dev){ dev.textContent = dv == null ? "" : "(" + fmtDev(dv) + ")"; dev.style.height = dv == null ? "0px" : "13px"; dev.style.color = rj === "OK" ? "#0B7A45" : "#B3261E"; }
+    const inp = q('[data-cell="' + dim.id + "-" + i + '"]');
+    if (inp){
+      inp.style.borderColor = rj === "NG" ? "#D93025" : rj === "OK" ? "#A8DCC0" : "#DADCE0";
+      inp.style.background  = rj === "NG" ? "#FCE8E6" : "#FFF";
+      inp.style.color       = rj === "NG" ? "#B3261E" : "#202124";
     }
-
-    // Bar & judge with IDs for partial update
-    const barTd=h("td",{id:`bar-${dim.id}`,style:{padding:"3px 5px"}});barTd.appendChild(devBar(lv,dim.nominal,dim.upper,dim.lower));tr.appendChild(barTd);
-    const jt=h("td",{id:`judge-${dim.id}`,style:{padding:"7px 3px",textAlign:"center"}});if(j)jt.appendChild(h("div",{style:{display:"inline-block",padding:"2px 8px",borderRadius:"4px",fontWeight:"800",fontSize:"12px",color:"#fff",background:j==="OK"?"#16a34a":"#dc2626"}},j));tr.appendChild(jt);
-    tbd.appendChild(tr);
+  }
+  const lv = latestOf(P.meas, dim.id), j = judgeDim(dim, lv);
+  const jb = q('[data-judge="' + dim.id + '"]');
+  if (jb){
+    jb.textContent = j || "—";
+    jb.style.background = j === "OK" ? "#E6F4EA" : j === "NG" ? "#FCE8E6" : "#F1F3F4";
+    jb.style.color = j === "OK" ? "#0B7A45" : j === "NG" ? "#B3261E" : "#5F6368";
+  }
+  const g = barGeom(dim, lv), dot = q('[data-dot="' + dim.id + '"]');
+  if (dot && g){
+    dot.style.display = g.pos == null ? "none" : "block";
+    if (g.pos != null){ dot.style.left = g.pos + "%"; dot.style.background = g.ok ? "#0F9D58" : "#D93025"; }
+  }
+  const tr = q('[data-row="' + dim.id + '"]');
+  if (tr) [].forEach.call(tr.children, td => {
+    td.style.background = td.hasAttribute("data-mid") ? (j === "NG" ? "#FFF7F6" : "#F7FAFF") : (j === "NG" ? "#FFF7F6" : "#FFF");
   });
-  tbl.appendChild(tbd);tw.appendChild(tbl);app.appendChild(tw);
-  app.appendChild(h("div",{style:{display:"flex",justifyContent:"flex-end",gap:"8px",marginTop:"10px"}},
-    h("button",{style:{padding:"7px 18px",borderRadius:"7px",border:"none",background:"#0f3460",color:"#fff",fontSize:"12px",fontWeight:"700"},onClick:()=>{
-      const holes=P.dims.filter(d=>(d.type||"穴")==="穴");
-      if(!holes.length){alert("穴の寸法がありません");return;}
-      const title=(P.partName||"品名なし")+"_"+(P.drawingNo||"図番なし");
-      const key=title+"_"+Date.now();
-      let rows="";
-      holes.forEach((d,i)=>{
-        const mt=d.method||"";const tn=d.toolNo||"";const jn=d.jobNo||"";
-        rows+=`<tr class='main'><td><div class='chk c0' id='chk${i*2}' onclick='t(this)'>-</div></td><td style='text-align:left;padding-left:8px;font-weight:bold;color:#fff'>${dName(d)}</td><td style='text-align:left;color:#aaa'>${mt}</td><td style='color:#aaa'>${tn}</td><td style='color:#aaa'>${jn}</td><td style='line-height:1.6'><span style='color:#4caf50'>${fmtTol(d.upper)}</span><br><span style='color:#ef5350'>${fmtTol(d.lower)}</span></td><td style='line-height:1.6'>${uLim(d)}<br><span style='color:#aaa'>${lLim(d)}</span></td><td style='color:#42a5f5;font-weight:bold'>${midLim(d)}</td></tr>`;
-      });
-      const html=`<!DOCTYPE html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1,user-scalable=no'><meta name='apple-mobile-web-app-capable' content='yes'><title>${title}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;font-size:14px;background:#1a1a2e;color:#e0e0e0}h1{font-size:15px;padding:10px;background:#16213e;color:#fff;text-align:center}.toolbar{display:flex;justify-content:flex-end;padding:8px;background:#16213e;border-top:1px solid #333}.btn-reset{padding:10px 20px;font-size:14px;background:#b71c1c;color:#fff;border:none;border-radius:8px;cursor:pointer}table{width:100%;border-collapse:collapse}th{background:#0f3460;color:#fff;padding:8px 4px;font-size:11px;border:1px solid #333;position:sticky;top:0;z-index:10}td{padding:8px 4px;border:1px solid #333;font-size:13px;vertical-align:middle;text-align:center;font-family:-apple-system,monospace}tr.main:nth-child(odd) td{background:#16213e}tr.main:nth-child(even) td{background:#1a1a2e}.chk{width:100%;min-height:48px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:bold;border-radius:8px;cursor:pointer;user-select:none}.c0{background:#333;color:#888}.c1{background:#1b5e20;color:#4caf50}.c2{background:#0d47a1;color:#42a5f5}</style></head><body><h1>${title} — 工具セッティング（穴）</h1><div class='toolbar'><button class='btn-reset' onclick='resetAll()'>全リセット</button></div><table><thead><tr><th style='width:48px'>済</th><th style='text-align:left;padding-left:8px'>寸法</th><th style='text-align:left'>加工方法</th><th>工具No.</th><th>Job</th><th>上偏差/下偏差</th><th>上限/下限</th><th>狙い値</th></tr></thead><tbody>${rows}</tbody></table><script>var KEY='${key}';function t(e){var v=e.textContent.trim();if(v==='-'){e.textContent='\u2713';e.className='chk c1'}else if(v==='\u2713'){e.textContent='\u2713\u2713';e.className='chk c2'}else{e.textContent='-';e.className='chk c0'}save()}function save(){var d={};document.querySelectorAll('.chk').forEach(function(el){d[el.id]=el.textContent.trim()});try{localStorage.setItem(KEY,JSON.stringify(d))}catch(e){}}function load(){try{var d=JSON.parse(localStorage.getItem(KEY));if(!d)return;Object.keys(d).forEach(function(id){var el=document.getElementById(id);if(!el)return;var v=d[id];el.textContent=v;if(v==='\u2713')el.className='chk c1';else if(v==='\u2713\u2713')el.className='chk c2';else el.className='chk c0'})}catch(e){}}function resetAll(){if(!confirm('全てのチェックをリセットしますか？'))return;document.querySelectorAll('.chk').forEach(function(el){el.textContent='-';el.className='chk c0'});save()}load();<\/script></body></html>`;
-      const blob=new Blob([html],{type:"text/html"});
-      const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-      a.download=title+"_工具セッティング.html";a.click();URL.revokeObjectURL(a.href);
-    }},"🔧 工具セッティングシート出力（穴）"),
-    h("button",{style:{padding:"7px 18px",borderRadius:"7px",border:"2px solid #e2e8f0",background:"#fff",fontSize:"12px",fontWeight:"600",color:"#64748b"},onClick:()=>{P.dims.forEach(d=>{P.meas[d.id]=Array(ROUNDS).fill("");});P.serial="";schedSave();render();}},"測定値クリア")
-  ));
+  const st = statsOf(P.dims, P.meas);
+  const setS = (k, v) => { const e = q('[data-sum="' + k + '"]'); if (e) e.textContent = String(v); };
+  setS("total", P.dims.length); setS("ok", st.ok); setS("ng", st.ng); setS("none", st.none);
 }
 
-function renderReport(app){
-  app.appendChild(h("div",{className:"no-print",style:{display:"flex",justifyContent:"flex-end",marginBottom:"10px"}},h("button",{style:{padding:"8px 24px",borderRadius:"8px",border:"none",background:"#334155",color:"#fff",fontSize:"13px",fontWeight:"700"},onClick:()=>window.print()},"印刷 / PDF保存")));
-  const rp=h("div",{className:"print-area",style:{background:"#fff",borderRadius:"10px",padding:"24px",boxShadow:"0 1px 4px rgba(0,0,0,.08)"}});
-  rp.appendChild(h("div",{style:{fontSize:"20px",fontWeight:"800",marginBottom:"6px",color:"#1e293b"}},"検査成績書"));
-  rp.appendChild(h("div",{style:{fontSize:"12px",color:"#475569",marginBottom:"4px"}},"図番: "+(P.drawingNo||"—")+"　　品名: "+(P.partName||"—")));
-  rp.appendChild(h("div",{style:{fontSize:"12px",color:"#475569",marginBottom:"16px"}},"検査日: "+(P.date||"")+"　　担当: "+(P.inspector||"")+(P.serial?"　　S/N: "+P.serial:"")));
-  const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px"}});
-  const thr=h("tr",{style:{background:"#334155",color:"#fff",fontSize:"11px"}});
-  [{t:"No.",w:"36px"},{t:"種別",w:"40px"},{t:"寸法"},{t:"上限値"},{t:"下限値"},{t:"実測値"},{t:"判定",w:"50px"}].forEach(c=>thr.appendChild(h("th",{style:{padding:"8px 6px",textAlign:c.t==="寸法"?"left":"center",width:c.w||"auto"}},c.t)));
-  tbl.appendChild(h("thead",{},thr));const tbd=h("tbody",{});
-  const reportDims=P.dims.filter(d=>d.inReport!==false);
-  reportDims.forEach((dim,idx)=>{const lv=latest(dim.id);const j=judge(lv,dim.nominal,dim.upper,dim.lower);
-    const r=h("tr",{style:{borderBottom:"1px solid #e2e8f0",background:j==="NG"?"#fef2f2":"transparent"}});
-    r.appendChild(h("td",{style:{padding:"9px 6px",textAlign:"center",color:"#94a3b8"}},""+(idx+1)));
-    const typeColors2={"穴":"#2563eb","軸":"#dc2626","距離":"#64748b"};
-    r.appendChild(h("td",{style:{padding:"9px 4px",textAlign:"center",fontSize:"11px",fontWeight:"700",color:typeColors2[dim.type]||"#94a3b8"}},dim.type||"—"));
-    r.appendChild(h("td",{style:{padding:"9px 6px",fontWeight:"700",fontSize:"14px"}},dName(dim)));
-    r.appendChild(h("td",{style:{padding:"9px 6px",textAlign:"center",fontFamily:"monospace"}},""+uLim(dim)));
-    r.appendChild(h("td",{style:{padding:"9px 6px",textAlign:"center",fontFamily:"monospace"}},""+lLim(dim)));
-    r.appendChild(h("td",{style:{padding:"9px 6px",textAlign:"center",fontFamily:"monospace",fontWeight:"700",fontSize:"14px",color:lv?(j==="OK"?"#16a34a":"#dc2626"):"#cbd5e1"}},lv||"—"));
-    const jt=h("td",{style:{padding:"9px 6px",textAlign:"center"}});if(j)jt.appendChild(h("span",{style:{fontWeight:"800",color:j==="OK"?"#16a34a":"#dc2626"}},j));else jt.textContent="—";r.appendChild(jt);tbd.appendChild(r);});
-  tbl.appendChild(tbd);rp.appendChild(tbl);app.appendChild(rp);
+/* ── dimension editor (1 row per dimension) ── */
+function buildEditor(){
+  const box = h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:12px;margin-bottom:8px" });
+  const mgMsg = h("div", { style:"margin-top:6px;font-size:13px;font-weight:600;color:#B3261E" });
+  box.appendChild(h("div", { style:"display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px" }, [
+    h("div", { style:"font-size:15px;font-weight:700;margin-right:auto", text:"寸法リスト編集" }),
+    h("button", { style:"height:38px;padding:0 14px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;font-size:13px;font-weight:600", text:"並べ替え (穴→軸→距離)",
+      onclick: () => { sortDims(P.dims); save(); renderProject(); } }),
+    h("button", { style:"height:38px;padding:0 14px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#0062CC;font-size:13px;font-weight:600", text:"JSON追加取込",
+      onclick: () => { SHOWMERGE = !SHOWMERGE; renderProject(); } })
+  ]));
+  if (SHOWMERGE){
+    const ta = h("textarea", { placeholder:"既存の寸法に追加するJSONを貼り付け", style:"width:100%;height:100px;padding:10px;font-size:13px;border:1px solid #DADCE0;border-radius:10px;resize:vertical;" + MONO, oninput: e => MGTEXT = e.target.value });
+    ta.value = MGTEXT;
+    box.appendChild(h("div", { style:"border:1px solid #DADCE0;border-radius:12px;padding:12px;margin-bottom:10px;background:#F1F3F4" }, [
+      ta, mgMsg,
+      h("div", { style:"display:flex;gap:8px;margin-top:8px" }, [
+        h("button", { style:"height:40px;padding:0 20px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:13px;font-weight:600", text:"追加",
+          onclick: () => {
+            try {
+              const d = parseImport(MGTEXT);
+              let maxId = Math.max.apply(null, [0].concat(P.dims.map(x => x.id)));
+              d.dims.forEach(x => { maxId++; P.dims.push(dimFromJSON(x, maxId)); P.meas[maxId] = emptyRounds(P.rounds); });
+              MGTEXT = ""; SHOWMERGE = false; save(); renderProject();
+            } catch (err){ mgMsg.textContent = err.message; }
+          } }),
+        h("button", { style:"height:40px;padding:0 20px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#5F6368;font-size:13px;font-weight:600", text:"キャンセル",
+          onclick: () => { SHOWMERGE = false; renderProject(); } })
+      ])
+    ]));
+  }
+
+  const COLS = [["No.",38],["種別",66],["公称値",88],["記号",62],["等級",56],["個数",54],["上偏差",86],["下偏差",86],["上限/下限",92],["加工方法",94],["工具No.",82],["Job",86],["",42]];
+  const scroll = h("div", { style:"border:1px solid #DADCE0;border-radius:12px;overflow:auto;max-height:46vh" });
+  const table = h("table", { style:"border-collapse:separate;border-spacing:0;width:100%;min-width:942px" });
+  scroll.appendChild(table);
+  table.appendChild(h("thead", null, [ h("tr", null, COLS.map(c =>
+    h("th", { style:"position:sticky;top:0;z-index:5;background:#F1F3F4;border-bottom:1px solid #DADCE0;padding:6px 4px;font-size:11px;font-weight:600;color:#5F6368;text-align:center;width:" + c[1] + "px;min-width:" + c[1] + "px", text:c[0] }))) ]));
+
+  const tbody = h("tbody");
+  table.appendChild(tbody);
+  const cell = k => h("td", { style:"border-bottom:1px solid #E8EAED;padding:4px" }, [k]);
+  const navKey = (col, idx) => e => {
+    if (e.key !== "Enter" && e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const el = document.querySelector('[data-ec="' + col + "-" + (e.key === "ArrowUp" ? idx - 1 : idx + 1) + '"]');
+    if (el){ e.preventDefault(); el.focus(); if (el.select) el.select(); }
+  };
+
+  P.dims.forEach((d, idx) => {
+    const applyFit = () => { const r = lookupFit(d.tClass, d.nominal); if (r){ d.upper = r[0]; d.lower = r[1]; } };
+    const curL = (d.tClass || "").replace(/[0-9]/g, ""), curG = (d.tClass || "").replace(/[^0-9]/g, "");
+    const num = (col, val, color, ph, on) => h("input", { type:"number", step:"any", value:val, placeholder:ph || "", "data-ec": col + "-" + idx,
+      style:"width:100%;height:34px;padding:0 5px;font-size:13px;font-weight:600;text-align:center;border:1px solid #DADCE0;border-radius:8px;color:" + color + ";" + MONO,
+      onfocus: e => e.target.select(), onkeydown: navKey(col, idx), oninput: on });
+    const txt = (col, val, on) => h("input", { type:"text", value:val, placeholder:"—", "data-ec": col + "-" + idx,
+      style:"width:100%;height:34px;padding:0 5px;font-size:13px;font-weight:600;text-align:center;border:1px solid #DADCE0;border-radius:8px;" + MONO,
+      onfocus: e => e.target.select(), onkeydown: navKey(col, idx), onchange: on });
+    const sel = (opts, val, color, on) => { const s = h("select", { style:"width:100%;height:34px;padding:0 2px;font-size:13px;font-weight:600;border:1px solid #DADCE0;border-radius:8px;background:#FFF;color:" + color, onchange: on },
+      opts.map(o => h("option", { value:o, text:o === "" ? "—" : o }))); s.value = val; return s; };
+
+    const calc = h("div", { style:"text-align:center;font-size:12px;line-height:1.45;" + MONO }, [
+      h("div", { style:"font-weight:700", text:String(uLim(d)) }), h("div", { style:"color:#5F6368", text:String(lLim(d)) })
+    ]);
+    const refresh = () => { calc.children[0].textContent = String(uLim(d)); calc.children[1].textContent = String(lLim(d)); };
+
+    const upIn = num("up", d.upper, "#0B7A45", "", e => { const v = parseFloat(e.target.value); if (!isNaN(v)){ d.upper = v; save(); refresh(); } });
+    const loIn = num("lo", d.lower, "#B3261E", "", e => { const v = parseFloat(e.target.value); if (!isNaN(v)){ d.lower = v; save(); refresh(); } });
+    const syncFit = () => { upIn.value = d.upper; loIn.value = d.lower; refresh(); };
+
+    const tr = h("tr", { style:"background:" + (idx % 2 ? "#FAFAFB" : "#FFF") }, [
+      h("td", { style:"border-bottom:1px solid #E8EAED;padding:4px;text-align:center;font-size:13px;font-weight:600;color:#5F6368;" + MONO, text:String(idx+1) }),
+      cell(sel(["穴","軸","距離"], d.type || "穴", TYPE_TEXT[d.type || "穴"], e => { d.type = e.target.value; d.name = (d.type === "距離" ? "" : "φ") + d.nominal; if (d.type === "距離") d.tClass = ""; applyFit(); save(); renderProject(); })),
+      cell(num("nom", d.nominal, "#202124", "", e => { const v = parseFloat(e.target.value); if (isNaN(v)) return; d.nominal = v; d.name = (d.type === "距離" ? "" : "φ") + v; applyFit(); save(); syncFit(); })),
+      cell(sel(d.type === "距離" ? [""] : (d.type === "軸" ? SHAFT_LETTERS : HOLE_LETTERS), curL, "#0062CC", e => { d.tClass = e.target.value + curG; applyFit(); save(); syncFit(); })),
+      cell(sel(d.type === "距離" ? [""] : GRADES, curG, "#0062CC", e => { d.tClass = curL + e.target.value; applyFit(); save(); syncFit(); })),
+      cell(num("qty", d.qty > 1 ? d.qty : "", "#202124", "1", e => { const v = parseInt(e.target.value,10); d.qty = (!isNaN(v) && v > 1) ? v : 1; save(); })),
+      cell(upIn), cell(loIn), cell(calc),
+      cell(sel(METHODS, d.method || "", "#202124", e => { d.method = e.target.value; save(); })),
+      cell(txt("tool", (d.toolNo || "").replace(/^T/i, ""), e => { const v = e.target.value.trim().replace(/^T/i, ""); d.toolNo = v ? "T" + v : ""; save(); })),
+      cell(txt("job", d.jobNo || "", e => { d.jobNo = e.target.value.trim(); save(); })),
+      h("td", { style:"border-bottom:1px solid #E8EAED;padding:4px;text-align:center" }, [
+        h("button", { style:"width:34px;height:34px;border:1px solid #DADCE0;border-radius:8px;background:#FFF;color:#5F6368;font-size:13px", text:"×",
+          onclick: () => {
+            if (!confirm((idx+1) + ". " + dName(d) + " を削除しますか")) return;
+            P.dims = P.dims.filter(x => x.id !== d.id); delete P.meas[d.id];
+            save(); renderProject();
+          } })
+      ])
+    ]);
+    tbody.appendChild(tr);
+  });
+
+  box.appendChild(scroll);
+  box.appendChild(h("div", { style:"display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap" }, [
+    h("button", { style:"height:42px;padding:0 18px;border:1px dashed #DADCE0;border-radius:12px;background:#FFF;color:#0062CC;font-size:13px;font-weight:600", text:"＋ 行を追加",
+      onclick: () => {
+        const nid = Math.max.apply(null, [0].concat(P.dims.map(d => d.id))) + 1;
+        P.dims.push({ id:nid, name:"φ0", tClass:"", nominal:0, upper:0, lower:0, type:"穴", qty:1, inReport:true, method:"", toolNo:"", jobNo:"" });
+        P.meas[nid] = emptyRounds(P.rounds);
+        save(); renderProject();
+      } }),
+    h("div", { style:"font-size:12px;color:#5F6368", text:"記号と等級を選ぶと JIS B 0401 から上下偏差を自動入力。Enter で同じ列の次の行へ移動" })
+  ]));
+  return box;
 }
 
-function render(){const app=document.getElementById("app");app.innerHTML="";if(view==="list")renderList(app);else renderProject(app);}
-showList();
+/* ── report ── */
+function renderReport(body){
+  const dims = P.dims.filter(d => d.inReport !== false);
+  let ok = 0, ng = 0, none = 0;
+  const rows = dims.map((d, i) => {
+    const lv = latestOf(P.meas, d.id), j = judgeDim(d, lv);
+    if (j === "OK") ok++; else if (j === "NG") ng++; else none++;
+    return h("tr", null, [
+      h("td", { style:"border:1px solid #DADCE0;padding:8px 6px;text-align:center;color:#5F6368;" + MONO, text:String(i+1) }),
+      h("td", { style:"border:1px solid #DADCE0;padding:8px 6px;text-align:center;font-size:13px;font-weight:600;color:" + (TYPE_TEXT[d.type] || "#5F6368"), text:d.type || "—" }),
+      h("td", { style:"border:1px solid #DADCE0;padding:8px 10px;font-size:15px;font-weight:700", text:dName(d) + (d.qty > 1 ? " ×" + d.qty : "") }),
+      h("td", { style:"border:1px solid #DADCE0;padding:8px 6px;text-align:center;white-space:nowrap;" + MONO, text:String(uLim(d)) }),
+      h("td", { style:"border:1px solid #DADCE0;padding:8px 6px;text-align:center;white-space:nowrap;" + MONO, text:String(lLim(d)) }),
+      h("td", { style:"border:1px solid #DADCE0;padding:8px 6px;text-align:center;font-size:15px;font-weight:700;" + MONO + ";color:" + (lv ? (j === "OK" ? "#0B7A45" : "#B3261E") : "#5F6368"), text:lv || "—" }),
+      h("td", { style:"border:1px solid #DADCE0;padding:8px 6px;text-align:center;font-weight:700;color:" + (j === "OK" ? "#0B7A45" : j === "NG" ? "#B3261E" : "#5F6368"), text:j || "—" })
+    ]);
+  });
+  const verdict = ng > 0 ? "不合格" : (none > 0 || !dims.length) ? "未完了" : "合格";
+
+  const inner = h("div", { style:"max-width:900px;margin:0 auto" });
+  body.appendChild(inner);
+  inner.appendChild(h("div", { class:"no-print", style:"display:flex;justify-content:flex-end;margin-bottom:10px" }, [
+    h("button", { style:"height:44px;padding:0 22px;border:none;border-radius:12px;background:#007AFF;color:#FFF;font-size:14px;font-weight:600", text:"印刷 / PDF保存", onclick: () => window.print() })
+  ]));
+
+  const sign = h("div", { style:"display:flex;flex-shrink:0;border:1px solid #202124" }, ["承認","確認","作成"].map(s =>
+    h("div", { style:"width:70px;border-left:1px solid #202124" }, [
+      h("div", { style:"font-size:11px;text-align:center;padding:3px 0;border-bottom:1px solid #202124;color:#5F6368;white-space:nowrap", text:s }),
+      h("div", { style:"height:44px" })
+    ])));
+
+  const metaRow = (l1,v1,l2,v2) => h("tr", null, [
+    h("th", { style:"width:74px;text-align:left;padding:5px 8px 5px 0;color:#5F6368;font-weight:600;white-space:nowrap", text:l1 }),
+    h("td", { style:"padding:5px 22px 5px 0;font-weight:600;white-space:nowrap", text:v1 }),
+    h("th", { style:"width:74px;text-align:left;padding:5px 8px 5px 0;color:#5F6368;font-weight:600;white-space:nowrap", text:l2 }),
+    h("td", { style:"padding:5px 0;font-weight:600;white-space:nowrap", text:v2 })
+  ]);
+
+  inner.appendChild(h("div", { class:"print-area", style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:28px 32px" }, [
+    h("div", { style:"display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:2px solid #202124;padding-bottom:12px;margin-bottom:16px" }, [
+      h("div", { style:"flex-shrink:0" }, [
+        h("div", { style:"font-size:24px;font-weight:700;letter-spacing:.12em;white-space:nowrap", text:"検査成績書" }),
+        h("div", { style:"font-size:12px;color:#5F6368;margin-top:3px;white-space:nowrap", text:"寸法検査ツール " + VER })
+      ]), sign
+    ]),
+    h("table", { style:"width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px" }, [
+      h("tbody", null, [
+        metaRow("図番", P.drawingNo || "—", "品名", P.partName || "—"),
+        metaRow("検査日", P.date || "—", "担当", P.inspector || "—"),
+        metaRow("S/N", P.serial || "—", "測定回数", P.rounds + "回 (最新値を記載)")
+      ])
+    ]),
+    h("table", { style:"width:100%;border-collapse:collapse;font-size:13px" }, [
+      h("thead", null, [ h("tr", { style:"background:#F1F3F4" }, [
+        ["No.",42],["種別",50],["寸法",0],["上限値",86],["下限値",86],["実測値",92],["判定",56]
+      ].map(c => h("th", { style:"border:1px solid #DADCE0;padding:8px 6px;font-size:12px;color:#5F6368;" + (c[1] ? "width:" + c[1] + "px" : "text-align:left"), text:c[0] }))) ]),
+      h("tbody", null, rows)
+    ]),
+    h("div", { style:"display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:16px;padding-top:10px;border-top:1px solid #DADCE0;font-size:13px;color:#5F6368" }, [
+      h("div", { style:"white-space:nowrap", text:"全" + dims.length + "項目 · OK " + ok + " · NG " + ng + " · 未測定 " + none }),
+      h("div", { style:"font-size:17px;font-weight:700;white-space:nowrap;color:" + (ng > 0 ? "#B3261E" : none > 0 ? "#5F6368" : "#0B7A45"), text:"総合判定 " + verdict })
+    ])
+  ]));
+}
+
+initFB();
+renderList();
+
 </script>
 </body>
 </html>
