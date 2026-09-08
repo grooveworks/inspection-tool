@@ -530,7 +530,9 @@ function renderMeas(body){
   ]));
 
   if (EDIT) body.appendChild(buildEditor());
-  body.appendChild(buildTable());
+  const tbl = buildTable();
+  body.appendChild(tbl);
+  if (tbl.__fitHeader) tbl.__fitHeader();
   body.appendChild(h("div", { style:"flex-shrink:0;display:flex;gap:8px;justify-content:flex-end;padding-top:8px;flex-wrap:wrap" }, [
     h("button", { style:"height:40px;padding:0 16px;border:1px solid #DADCE0;border-radius:12px;background:#FFF;font-size:13px;font-weight:600", text:"工具セッティングシート出力",
       onclick: () => { if (!P.dims.some(d => (d.type || "穴") === "穴")){ alert("穴の寸法がありません"); return; } downloadToolSheet(P); } }),
@@ -544,16 +546,16 @@ function renderMeas(body){
 }
 
 const PIN = [
-  { w:32, label:"報", align:"center" },
-  { w:52, label:"種別", align:"center" },
-  { w:126, label:"寸法", align:"left" },
-  { w:64, label:"公差", align:"center" },
-  { w:78, label:"上限 / 下限", align:"center" },
-  { w:70, label:"狙い値", align:"center" }
+  { w:32, label:"報", align:"center", pad:"5px 4px" },
+  { w:52, label:"種別", align:"center", pad:"5px 4px" },
+  { w:118, label:"寸法", align:"left", pad:"5px 6px" },
+  { w:60, label:"公差", align:"right", pad:"5px 8px 5px 4px" },
+  { w:66, label:"上限/下限", align:"right", pad:"5px 8px 5px 4px" },
+  { w:70, label:"狙い値", align:"right", pad:"5px 8px 5px 4px" }
 ];
 
 function buildTable(){
-  const wrap = h("div", { style:"flex:1;min-height:120px;background:#FFF;border:1px solid #DADCE0;border-radius:16px;overflow:auto;scroll-padding-bottom:8px" });
+  const wrap = h("div", { style:"flex:1;min-height:120px;background:#FFF;border:1px solid #DADCE0;border-radius:16px;overflow:auto;scroll-snap-type:y mandatory;scroll-padding-top:28px;scroll-padding-bottom:8px" });
   if (!P.dims.length){
     wrap.appendChild(h("div", { style:"text-align:center;padding:48px 16px;color:#5F6368;font-size:14px", text:"寸法が登録されていません。「寸法編集」から追加してください。" }));
     return wrap;
@@ -565,25 +567,29 @@ function buildTable(){
   const trh = h("tr");
   let left = 0;
   PIN.forEach((c, i) => {
-    trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;left:" + left + "px;top:0;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;" + (i === PIN.length-1 ? "border-right:2px solid #E8EAED;" : "") + "padding:5px;font-size:11px;font-weight:600;color:#5F6368;text-align:" + c.align + ";width:" + c.w + "px;min-width:" + c.w + "px;max-width:" + c.w + "px", text:c.label }));
+    trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;left:" + left + "px;top:0;z-index:40;background:#FFF;border-bottom:2px solid #E8EAED;" + (i === PIN.length-1 ? "border-right:2px solid #E8EAED;" : "") + "padding:6px 4px;font-size:11px;font-weight:600;color:#5F6368;text-align:center;white-space:nowrap;width:" + c.w + "px;min-width:" + c.w + "px;max-width:" + c.w + "px", text:c.label }));
     left += c.w;
   });
   for (let i = 0; i < P.rounds; i++)
-    trh.appendChild(h("th", { style:"position:sticky;top:0;z-index:10;background:#FFF;border-bottom:2px solid #E8EAED;padding:5px 3px;font-size:11px;font-weight:600;color:#5F6368;min-width:81px", text:(i+1) + "回目" }));
-  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:44px;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;border-left:2px solid #E8EAED;padding:5px 6px;font-size:11px;font-weight:600;color:#5F6368;width:112px;min-width:112px;max-width:112px", text:"状態" }));
-  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:0;z-index:14;background:#FFF;border-bottom:2px solid #E8EAED;padding:5px 4px;font-size:11px;font-weight:600;color:#5F6368;width:44px;min-width:44px;max-width:44px", text:"判定" }));
+    trh.appendChild(h("th", { style:"position:sticky;top:0;z-index:30;background:#FFF;border-bottom:2px solid #E8EAED;padding:6px 4px;font-size:11px;font-weight:600;color:#5F6368;text-align:center;white-space:nowrap;min-width:81px", text:(i+1) + "回目" }));
+  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:44px;z-index:40;background:#FFF;border-bottom:2px solid #E8EAED;border-left:2px solid #E8EAED;padding:6px 4px;font-size:11px;font-weight:600;color:#5F6368;text-align:center;white-space:nowrap;width:112px;min-width:112px;max-width:112px", text:"状態" }));
+  trh.appendChild(h("th", { "data-pin":"1", style:"position:sticky;top:0;right:0;z-index:40;background:#FFF;border-bottom:2px solid #E8EAED;padding:6px 4px;font-size:11px;font-weight:600;color:#5F6368;text-align:center;white-space:nowrap;width:44px;min-width:44px;max-width:44px", text:"判定" }));
   table.appendChild(h("thead", null, [trh]));
 
   const tbody = h("tbody");
   table.appendChild(tbody);
   P.dims.forEach(dim => tbody.appendChild(buildRow(dim)));
-  // a full-width spacer row so the last dimension is never sliced by the frame edge
   wrap.appendChild(h("div", { style:"height:10px" }));
+  // rows must snap BELOW the sticky header, so the offset has to equal its measured height
+  wrap.__fitHeader = () => {
+    const th = table.querySelector("thead th");
+    if (th && th.offsetHeight) wrap.style.scrollPaddingTop = Math.ceil(th.offsetHeight) + "px";
+  };
   return wrap;
 }
 
 function buildRow(dim){
-  const tr = h("tr", { "data-row":String(dim.id) });
+  const tr = h("tr", { "data-row":String(dim.id), style:"scroll-snap-align:start" });
   const type = dim.type || "穴";
   const bgOf = () => { const j = judgeDim(dim, latestOf(P.meas, dim.id)); return j === "NG" ? "#FFF7F6" : "#FFF"; };
   const bg = bgOf();
@@ -605,7 +611,7 @@ function buildRow(dim){
   selT.value = type;
   tr.appendChild(pinTd(1, "padding:4px 3px", [selT]));
 
-  const nameRow = h("div", { style:"display:flex;align-items:baseline;gap:5px;min-width:0;overflow:hidden" }, [
+  const nameRow = h("div", { style:"display:flex;align-items:baseline;gap:5px;min-width:0;overflow:hidden;white-space:nowrap" }, [
     h("span", { style:"font-size:15px;font-weight:800;flex-shrink:0", text:dim.name }),
     dim.tClass ? h("span", { style:"font-size:12px;font-weight:700;padding:1px 5px;border-radius:6px;background:#E1F0FF;color:#0062CC;flex-shrink:0", text:dim.tClass }) : null,
     dim.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368;flex-shrink:0", text:"×" + dim.qty }) : null
@@ -614,9 +620,9 @@ function buildRow(dim){
   if (dim.method) tags.push(dim.method);
   if (dim.toolNo) tags.push(dim.toolNo);
   if (dim.jobNo) tags.push("J:" + dim.jobNo);
-  tr.appendChild(pinTd(2, "padding:5px 6px;white-space:nowrap;overflow:hidden", [
+  tr.appendChild(pinTd(2, "padding:5px 6px;overflow:hidden;line-height:1.25", [
     nameRow,
-    tags.length ? h("div", { style:"margin-top:2px;font-size:11px;color:#5F6368;font-weight:600;overflow:hidden;text-overflow:ellipsis", text:tags.join(" / ") }) : null
+    tags.length ? h("div", { style:"margin-top:2px;font-size:10px;color:#5F6368;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis", text:tags.join("/") }) : null
   ]));
 
   tr.appendChild(pinTd(3, "padding:4px 8px 4px 4px;text-align:right;font-size:11px;line-height:1.55;" + MONO, [
@@ -627,7 +633,7 @@ function buildRow(dim){
     h("div", { style:"color:#202124;font-weight:700", text:String(uLim(dim)) }),
     h("div", { style:"color:#5F6368;font-weight:700", text:String(lLim(dim)) })
   ]));
-  const midTd = pinTd(5, "padding:4px 6px;text-align:center", [
+  const midTd = pinTd(5, "padding:4px 8px 4px 4px;text-align:right", [
     h("div", { style:"font-size:14px;font-weight:800;color:#0062CC;" + MONO, text:String(midLim(dim)) })
   ]);
   midTd.setAttribute("data-mid", "1");
