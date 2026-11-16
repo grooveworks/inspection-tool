@@ -24,7 +24,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.1.0";
+const VER = "v2.1.1";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -199,11 +199,11 @@ function ncFromJSON(nc){
   const features = (Array.isArray(nc.features) ? nc.features : []).map(f => ({
     name:str(f.name), view:str(f.view), qty: parseInt(f.qty,10) > 1 ? parseInt(f.qty,10) : 1,
     dia:arr(f.dia), depth:arr(f.depth), thread:str(f.thread), chamfer:arr(f.chamfer),
-    gdt:arr(f.gdt), rough:str(f.rough), note:str(f.note)
+    gdt:arr(f.gdt), rough:str(f.rough), note:str(f.note), chk:f.chk === true
   }));
   const dists = (Array.isArray(nc.dists) ? nc.dists : []).map(d => {
     if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("距離データの形式が不正です (nominal, upper, lower が必要)");
-    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note) };
+    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true };
   });
   if (!features.length && !dists.length) throw new Error("ncデータ(features / dists)がありません");
   return { features, dists };
@@ -847,6 +847,7 @@ function renderNC(body){
   const inner = h("div", { style:"max-width:1280px;width:100%;margin:0 auto" });
   body.appendChild(inner);
   const nc = ncOf(P);
+  if (nc) P.nc = nc;   // rows below edit these objects directly (check column)
 
   inner.appendChild(h("div", { style:"display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
     h("div", { style:"flex:1" }),
@@ -884,6 +885,9 @@ function renderNC(body){
 
   const TH = "padding:7px 6px;font-size:12px;font-weight:600;color:#5F6368;text-align:left;border-bottom:1px solid #DADCE0;white-space:nowrap;position:sticky;top:0;background:#F8F9FA";
   const TD = "padding:7px 6px;font-size:13px;vertical-align:top;border-bottom:1px solid #E8EAED";
+  const chkCell = r => h("td", { style:TD + ";text-align:center" }, [
+    h("input", { type:"checkbox", checked: r.chk === true, style:"width:18px;height:18px", onchange: e => { r.chk = e.target.checked; save(); } })
+  ]);
   const lines = (a, mono) => a.length ? h("div", null, a.map(x => h("div", { style:"white-space:nowrap;" + (mono ? MONO : ""), text:x }))) : h("span", { style:"color:#9AA0A6", text:"—" });
   const one = (v, mono) => v ? h("span", { style:mono ? MONO : "", text:v }) : h("span", { style:"color:#9AA0A6", text:"—" });
   const card = (title, sub, table) => h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:12px 14px;margin-bottom:10px" }, [
@@ -894,11 +898,12 @@ function renderNC(body){
   ]);
 
   if (nc.features.length){
-    const cols = [["形状",""],["箇所","50px"],["径",""],["深さ",""],["ねじ",""],["面取り・R",""],["位置度",""],["粗さ",""],["備考",""]];
+    const cols = [["✓","36px"],["形状",""],["箇所","50px"],["径",""],["深さ",""],["ねじ",""],["面取り・R",""],["位置度",""],["粗さ",""],["備考",""]];
     inner.appendChild(card("穴・形状", nc.features.length + "件 / " + nc.features.reduce((a,f) => a + f.qty, 0) + "箇所",
       h("table", { style:"width:100%;border-collapse:collapse" }, [
         h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
         h("tbody", null, nc.features.map(f => h("tr", null, [
+          chkCell(f),
           h("td", { style:TD }, [ h("div", { style:"font-weight:700;white-space:nowrap", text:f.name || "—" }), f.view ? h("div", { style:"font-size:12px;color:#5F6368;white-space:nowrap", text:f.view }) : null ]),
           h("td", { style:TD + ";text-align:center;font-weight:700;" + MONO, text:String(f.qty) }),
           h("td", { style:TD }, [ lines(f.dia, true) ]),
@@ -913,11 +918,12 @@ function renderNC(body){
   }
 
   if (nc.dists.length){
-    const cols = [["寸法",""],["公差",""],["上限 / 下限",""],["箇所","50px"],["ビュー",""],["備考",""]];
+    const cols = [["✓","36px"],["寸法",""],["公差",""],["上限 / 下限",""],["箇所","50px"],["ビュー",""],["備考",""]];
     inner.appendChild(card("距離（片側・非対称公差）", nc.dists.length + "件",
       h("table", { style:"width:100%;border-collapse:collapse" }, [
         h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
         h("tbody", null, nc.dists.map(d => h("tr", null, [
+          chkCell(d),
           h("td", { style:TD + ";font-weight:700;" + MONO, text:String(d.nominal) }),
           h("td", { style:TD + ";white-space:nowrap;color:#0062CC;" + MONO, text:fmtTol(d.upper) + " / " + fmtTol(d.lower) }),
           h("td", { style:TD + ";white-space:nowrap;" + MONO, text:uLim(d) + " / " + lLim(d) }),
