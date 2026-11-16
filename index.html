@@ -24,7 +24,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.1.1";
+const VER = "v2.2.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -423,14 +423,37 @@ async function renderList(){
         h("button", { style:"min-height:44px;padding:0 24px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:14px;font-weight:600", text:"取込",
           onclick: async () => {
             try {
-              const d = parseImport(IMPTEXT);
-              const p = newProject({ partName:d.partName, drawingNo:d.drawingNo, preset:false, rounds:NF.rounds });
-              p.dims = d.dims.map((x,i) => dimFromJSON(x, i+1));
-              if (d.nc) p.nc = ncFromJSON(d.nc);
+              let raw;
+              try { raw = JSON.parse(IMPTEXT); } catch(e){ throw new Error("JSONの形式が不正です"); }
+              const hasDims = Array.isArray(raw.dims) && raw.dims.length > 0;
+              const nc = raw.nc ? ncFromJSON(raw.nc) : null;
+              if (!hasDims && !nc) throw new Error("寸法データ(dims)またはNCデータ(nc)がありません");
+              const dno = String(raw.drawingNo || "").trim();
+              // same drawing number already exists -> update its NC data only (dims / measurements untouched)
+              if (nc && dno){
+                const hit = (await Store.listProjects())
+                  .filter(x => String(x.drawingNo || "").trim() === dno)
+                  .sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+                if (hit){
+                  const ex = normalizeProject(await Store.getProject(hit.id) || hit);
+                  if (ncOf(ex) && !confirm((ex.partName || dno) + " のNCデータを置き換えますか")) return;
+                  ex.nc = nc;
+                  await Store.saveProject(ex);
+                  IMPTEXT = ""; SHOWIMP = false;
+                  await openProject(ex.id); TAB = "nc"; renderProject();
+                  return;
+                }
+              }
+              if (hasDims) parseImport(IMPTEXT);   // same dims validation as before
+              else if (!dno) throw new Error("NCデータだけの場合は図番(drawingNo)が必要です");
+              const p = newProject({ partName:raw.partName, drawingNo:raw.drawingNo, preset:false, rounds:NF.rounds });
+              p.dims = hasDims ? raw.dims.map((x,i) => dimFromJSON(x, i+1)) : [];
+              if (nc) p.nc = nc;
               normalizeProject(p);
               await Store.saveProject(p);
               IMPTEXT = ""; SHOWIMP = false;
-              openProject(p.id);
+              await openProject(p.id);
+              if (!hasDims){ TAB = "nc"; renderProject(); }
             } catch (err){ msg.textContent = err.message; }
           } }),
         h("button", { style:"min-height:44px;padding:0 24px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#5F6368;font-size:14px;font-weight:600", text:"キャンセル",
