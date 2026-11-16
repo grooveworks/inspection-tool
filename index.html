@@ -24,7 +24,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.0.0";
+const VER = "v2.1.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -191,6 +191,27 @@ function dimFromJSON(d, id){
   };
 }
 
+/* ── NC data (display only): nc = { features:[…], dists:[…] } ── */
+function ncFromJSON(nc){
+  if (!nc || typeof nc !== "object" || Array.isArray(nc)) throw new Error("ncデータの形式が不正です");
+  const arr = v => Array.isArray(v) ? v.filter(x => x != null && x !== "").map(String) : (v == null || v === "" ? [] : [String(v)]);
+  const str = v => v == null ? "" : String(v);
+  const features = (Array.isArray(nc.features) ? nc.features : []).map(f => ({
+    name:str(f.name), view:str(f.view), qty: parseInt(f.qty,10) > 1 ? parseInt(f.qty,10) : 1,
+    dia:arr(f.dia), depth:arr(f.depth), thread:str(f.thread), chamfer:arr(f.chamfer),
+    gdt:arr(f.gdt), rough:str(f.rough), note:str(f.note)
+  }));
+  const dists = (Array.isArray(nc.dists) ? nc.dists : []).map(d => {
+    if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("距離データの形式が不正です (nominal, upper, lower が必要)");
+    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note) };
+  });
+  if (!features.length && !dists.length) throw new Error("ncデータ(features / dists)がありません");
+  return { features, dists };
+}
+
+// stored data may come from older/partial records: always read through this
+function ncOf(p){ if (!p || !p.nc) return null; try { return ncFromJSON(p.nc); } catch(e){ return null; } }
+
 const HOLE_LETTERS = ["","H","G","F","E","D","C","B","A","JS","J","K","M","N","P","R","S","T","U","X","Z","ZA","ZB","ZC"];
 const SHAFT_LETTERS = ["","h","g","f","e","d","c","b","a","js","j","k","m","n","p","r","s"];
 const GRADES = ["","5","6","7","8","9","10","11"];
@@ -333,7 +354,7 @@ const MONO = "font-family:'SF Mono',Menlo,Consolas,monospace;font-variant-numeri
 const app = () => document.getElementById("app");
 
 let P = null, TAB = "meas", EDIT = false, SHOWNEW = false, SHOWIMP = false, unsub = null, saveT = null;
-let NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }, IMPTEXT = "", MGTEXT = "", SHOWMERGE = false;
+let NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }, IMPTEXT = "", MGTEXT = "", SHOWMERGE = false, NCTEXT = "", SHOWNCIMP = false;
 
 function save(){ clearTimeout(saveT); saveT = setTimeout(() => { if (P) Store.saveProject(P); }, 400); }
 
@@ -405,6 +426,7 @@ async function renderList(){
               const d = parseImport(IMPTEXT);
               const p = newProject({ partName:d.partName, drawingNo:d.drawingNo, preset:false, rounds:NF.rounds });
               p.dims = d.dims.map((x,i) => dimFromJSON(x, i+1));
+              if (d.nc) p.nc = ncFromJSON(d.nc);
               normalizeProject(p);
               await Store.saveProject(p);
               IMPTEXT = ""; SHOWIMP = false;
@@ -461,7 +483,7 @@ async function openProject(id){
   const p = await Store.getProject(id);
   if (!p) return;
   P = normalizeProject(p);
-  TAB = "meas"; EDIT = false; SHOWMERGE = false;
+  TAB = "meas"; EDIT = false; SHOWMERGE = false; SHOWNCIMP = false;
   if (unsub){ unsub(); unsub = null; }
   unsub = Store.onProjectSync(id, data => {
     if (data && data.updatedAt > (P.updatedAt || 0) + 2000){ Object.assign(P, data); normalizeProject(P); renderProject(); }
@@ -481,20 +503,23 @@ function renderProject(){
   const tabBtn = (label, key) => h("button", { style:"height:34px;padding:0 14px;border:none;border-radius:8px;font-size:13px;font-weight:600;" + (TAB === key ? "background:#FFF;color:#0062CC" : "background:transparent;color:#5F6368"), text:label,
     onclick: () => { TAB = key; renderProject(); } });
   const repCount = P.dims.filter(d => d.inReport !== false && latestOf(P.meas, d.id) !== "").length;
+  const ncD = ncOf(P), ncCount = ncD ? ncD.features.length + ncD.dists.length : 0;
 
   shell.appendChild(h("div", { class:"no-print", style:"flex-shrink:0;background:#FFF;border-bottom:1px solid #E8EAED;padding:5px 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap" }, [
     h("button", { style:"width:36px;height:36px;flex-shrink:0;border:1px solid #DADCE0;border-radius:10px;background:#FFF;font-size:16px", text:"←", onclick: renderList }),
     h("div", { style:"min-width:180px" }, [ inP, inD ]),
     h("div", { style:"flex:1" }),
     h("div", { style:"display:flex;background:#F1F3F4;border-radius:11px;padding:3px;gap:3px" }, [
-      tabBtn("測定", "meas"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
+      tabBtn("測定", "meas"), tabBtn("NC" + (ncCount ? " (" + ncCount + ")" : ""), "nc"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
     ]),
     h("div", { style:"font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;" + (isCloud() ? "background:#E6F4EA;color:#0B7A45" : "background:#FEF7E0;color:#8A6100"), text: isCloud() ? "同期" : "ローカル" })
   ]));
 
   const body = h("div", { style:"flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:8px 6px" });
   shell.appendChild(body);
-  if (TAB === "meas") renderMeas(body); else { body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderReport(body); }
+  if (TAB === "meas") renderMeas(body);
+  else if (TAB === "nc"){ body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderNC(body); }
+  else { body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderReport(body); }
 }
 
 /* ── measurement view ── */
@@ -817,6 +842,93 @@ function buildEditor(){
 }
 
 /* ── report ── */
+/* ── NC view (display only) ── */
+function renderNC(body){
+  const inner = h("div", { style:"max-width:1280px;width:100%;margin:0 auto" });
+  body.appendChild(inner);
+  const nc = ncOf(P);
+
+  inner.appendChild(h("div", { style:"display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
+    h("div", { style:"flex:1" }),
+    h("button", { style:"height:32px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;" + (SHOWNCIMP ? "border:1px solid #007AFF;background:#E1F0FF;color:#0062CC" : "border:1px solid #DADCE0;background:#FFF;color:#202124"),
+      text: SHOWNCIMP ? "取込を閉じる" : "NCデータ取込", onclick: () => { SHOWNCIMP = !SHOWNCIMP; renderProject(); } })
+  ]));
+
+  if (SHOWNCIMP){
+    const ta = h("textarea", { placeholder:'{"nc":{"features":[…],"dists":[…]}}', style:"width:100%;height:130px;padding:11px;font-size:13px;line-height:1.6;border:1px solid #DADCE0;border-radius:12px;resize:vertical;" + MONO, oninput: e => NCTEXT = e.target.value });
+    ta.value = NCTEXT;
+    const msg = h("div", { style:"margin-top:8px;font-size:13px;font-weight:600;color:#B3261E" });
+    inner.appendChild(h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:16px;margin-bottom:10px" }, [
+      h("div", { style:"font-size:12px;color:#5F6368;margin-bottom:10px", text: nc ? "貼り付けたJSONで現在のNCデータを置き換えます" : "NCデータのJSONを貼り付け" }),
+      ta, msg,
+      h("div", { style:"display:flex;gap:8px;margin-top:12px" }, [
+        h("button", { style:"min-height:44px;padding:0 24px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:14px;font-weight:600", text:"取込",
+          onclick: () => {
+            try {
+              const raw = JSON.parse(NCTEXT);
+              const next = ncFromJSON(raw.nc || raw);
+              if (nc && !confirm("現在のNCデータを置き換えますか")) return;
+              P.nc = next; NCTEXT = ""; SHOWNCIMP = false; save(); renderProject();
+            } catch (err){ msg.textContent = err instanceof SyntaxError ? "JSONの形式が不正です" : err.message; }
+          } }),
+        h("button", { style:"min-height:44px;padding:0 24px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#5F6368;font-size:14px;font-weight:600", text:"キャンセル",
+          onclick: () => { SHOWNCIMP = false; renderProject(); } })
+      ])
+    ]));
+  }
+
+  if (!nc){
+    inner.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px;background:#FFF;border:1px solid #DADCE0;border-radius:16px", text:"NCデータがまだありません" }));
+    return;
+  }
+
+  const TH = "padding:7px 6px;font-size:12px;font-weight:600;color:#5F6368;text-align:left;border-bottom:1px solid #DADCE0;white-space:nowrap;position:sticky;top:0;background:#F8F9FA";
+  const TD = "padding:7px 6px;font-size:13px;vertical-align:top;border-bottom:1px solid #E8EAED";
+  const lines = (a, mono) => a.length ? h("div", null, a.map(x => h("div", { style:"white-space:nowrap;" + (mono ? MONO : ""), text:x }))) : h("span", { style:"color:#9AA0A6", text:"—" });
+  const one = (v, mono) => v ? h("span", { style:mono ? MONO : "", text:v }) : h("span", { style:"color:#9AA0A6", text:"—" });
+  const card = (title, sub, table) => h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:12px 14px;margin-bottom:10px" }, [
+    h("div", { style:"display:flex;align-items:baseline;gap:8px;margin-bottom:8px" }, [
+      h("div", { style:"font-size:15px;font-weight:700", text:title }), h("div", { style:"font-size:12px;color:#5F6368", text:sub })
+    ]),
+    h("div", { style:"overflow-x:auto" }, [ table ])
+  ]);
+
+  if (nc.features.length){
+    const cols = [["形状",""],["箇所","50px"],["径",""],["深さ",""],["ねじ",""],["面取り・R",""],["位置度",""],["粗さ",""],["備考",""]];
+    inner.appendChild(card("穴・形状", nc.features.length + "件 / " + nc.features.reduce((a,f) => a + f.qty, 0) + "箇所",
+      h("table", { style:"width:100%;border-collapse:collapse" }, [
+        h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
+        h("tbody", null, nc.features.map(f => h("tr", null, [
+          h("td", { style:TD }, [ h("div", { style:"font-weight:700;white-space:nowrap", text:f.name || "—" }), f.view ? h("div", { style:"font-size:12px;color:#5F6368;white-space:nowrap", text:f.view }) : null ]),
+          h("td", { style:TD + ";text-align:center;font-weight:700;" + MONO, text:String(f.qty) }),
+          h("td", { style:TD }, [ lines(f.dia, true) ]),
+          h("td", { style:TD }, [ lines(f.depth, true) ]),
+          h("td", { style:TD + ";white-space:nowrap" }, [ one(f.thread) ]),
+          h("td", { style:TD }, [ lines(f.chamfer, true) ]),
+          h("td", { style:TD }, [ lines(f.gdt, true) ]),
+          h("td", { style:TD + ";white-space:nowrap" }, [ one(f.rough, true) ]),
+          h("td", { style:TD + ";color:#5F6368" }, [ one(f.note) ])
+        ])))
+      ])));
+  }
+
+  if (nc.dists.length){
+    const cols = [["寸法",""],["公差",""],["上限 / 下限",""],["箇所","50px"],["ビュー",""],["備考",""]];
+    inner.appendChild(card("距離（片側・非対称公差）", nc.dists.length + "件",
+      h("table", { style:"width:100%;border-collapse:collapse" }, [
+        h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
+        h("tbody", null, nc.dists.map(d => h("tr", null, [
+          h("td", { style:TD + ";font-weight:700;" + MONO, text:String(d.nominal) }),
+          h("td", { style:TD + ";white-space:nowrap;color:#0062CC;" + MONO, text:fmtTol(d.upper) + " / " + fmtTol(d.lower) }),
+          h("td", { style:TD + ";white-space:nowrap;" + MONO, text:uLim(d) + " / " + lLim(d) }),
+          h("td", { style:TD + ";text-align:center;" + MONO, text:String(d.qty) }),
+          h("td", { style:TD + ";white-space:nowrap" }, [ one(d.view) ]),
+          h("td", { style:TD + ";color:#5F6368" }, [ one(d.note) ])
+        ])))
+      ])));
+  }
+}
+
 function renderReport(body){
   const dims = P.dims.filter(d => d.inReport !== false);
   let ok = 0, ng = 0, none = 0;
