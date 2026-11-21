@@ -99,6 +99,41 @@ async function importTests(browser, html, errs) {
   return R;
 }
 
+async function drawingTests(browser, html, errs) {
+  // Google login / Picker / Drive are stubbed; pdf.js loads from cdnjs
+  const pg = await open(browser, html, 1180, 820, errs, 'drawing');
+  const st = path.join(__dirname, 'stubs'), fx = path.join(__dirname, 'fixtures');
+  await pg.route(/accounts\.google\.com\/gsi\/client/, r => r.fulfill({ path:path.join(st,'gsi.js'), contentType:'application/javascript' }));
+  await pg.route(/apis\.google\.com\/js\/api\.js/, r => r.fulfill({ path:path.join(st,'picker.js'), contentType:'application/javascript' }));
+  let auth = '';
+  await pg.route(/googleapis\.com\/drive\/v3\/files/, r => { auth = r.request().headers()['authorization'] || ''; r.fulfill({ path:path.join(fx,'test_drawing.pdf'), contentType:'application/pdf' }); });
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
+  const j = { partName:'DRAWTEST', drawingNo:'DT-1',
+    dims:[{ name:'φ10', nominal:10, upper:0.02, lower:0, type:'穴', locs:[{p:2,x:0.5,y:0.5,w:0.04,h:0.02}] }],
+    nc:{ features:[{ name:'穴A', view:'A-A', dia:['φ10'], locs:[{p:1,x:0.1,y:0.1,w:0.05,h:0.03}] }], dists:[] } };
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(600);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const sp = () => pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'DT-1'));
+  let p = await sp();
+  ok('D1 取込で位置(locs)が保存される', p.dims[0].locs.length === 1 && p.nc.features[0].locs.length === 1);
+  await pg.click('button:text-is("図面")'); await pg.waitForTimeout(300);
+  await pg.click('button:text-is("図面を選ぶ")'); await pg.waitForTimeout(3000);
+  p = await sp();
+  ok('D2 図面を選ぶ → 案件に図面が紐づく', p.drawing && p.drawing.fileId === 'FILE123', JSON.stringify(p.drawing));
+  ok('D3 Drive読込にログイントークンが付く', auth === 'Bearer TESTTOKEN', auth);
+  await pg.click('text=φ10 >> nth=0'); await pg.waitForTimeout(1500);
+  const lbl = await pg.textContent('text=/ページ/').catch(() => '');
+  ok('D4 行タップ → 該当ページへ移動して枠が出る', /^2 \//.test(lbl) && (await pg.$$('.drw-hl')).length === 1, lbl);
+  // existing drawing number: locs attach to existing dims without touching values
+  const j2 = JSON.parse(JSON.stringify(j)); j2.dims[0].locs = [{p:1,x:0.3,y:0.3,w:0.02,h:0.02}];
+  await pg.click('text=←'); await pg.waitForTimeout(300);
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j2)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700);
+  const all = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).filter(p => p.drawingNo === 'DT-1'));
+  ok('D5 同じ図番の再取込 → 既存の寸法に位置だけ更新・案件増えない', all.length === 1 && all[0].dims[0].locs[0].x === 0.3 && all[0].dims[0].upper === 0.02 && all[0].drawing.fileId === 'FILE123');
+  await pg.close();
+  return R;
+}
+
 (async () => {
   const browser = await chromium.launch(); const errs = [];
   const a = await shots(browser, baseHtml, 'before', errs), b = await shots(browser, newHtml, 'after', errs);
@@ -106,6 +141,8 @@ async function importTests(browser, html, errs) {
   for (const k of b) console.log((a.includes(k) ? diff(`${outDir}/before_${k}.png`, `${outDir}/after_${k}.png`) : 'new screen').padEnd(32), k);
   console.log('== 取込試験（改修後）');
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
+  console.log('== 図面タブ試験（改修後）');
+  for (const r of await drawingTests(browser, newHtml, errs)) console.log(r);
   console.log('== ページエラー'); console.log(errs.length ? errs.join('\n') : 'none');
   await browser.close();
 })();

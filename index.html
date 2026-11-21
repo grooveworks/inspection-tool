@@ -17,6 +17,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 /* below 820px the pinned columns would leave no room for input: fall back to plain scrolling */
 @media (max-width:820px){td[data-pin]{position:static!important}th[data-pin]{left:auto!important;right:auto!important}}
 @media print{.no-print{display:none!important}body{background:#fff}.print-area{border:none!important;border-radius:0!important;padding:0!important}@page{size:A4 portrait;margin:14mm}}
+.drw-hl{position:absolute;border:3px solid #FF3B30;border-radius:4px;background:rgba(255,59,48,.12);pointer-events:none}.drw-main{border-width:4px;animation:drwp 1s ease-in-out 3}@keyframes drwp{50%{box-shadow:0 0 0 10px rgba(255,59,48,.35)}}
 </style>
 </head>
 <body>
@@ -24,7 +25,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.2.0";
+const VER = "v2.3.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -181,13 +182,19 @@ function parseImport(raw){
   data.dims.forEach(d=>{ if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("寸法データの形式が不正です (name, nominal, upper, lower が必要)"); });
   return data;
 }
+// drawing locations: [{p:page(1-), x,y,w,h: 0..1 of page}] — kept as-is, invalid entries dropped
+function locsOf(v){
+  if (!Array.isArray(v)) return [];
+  return v.filter(b => b && [b.p,b.x,b.y,b.w,b.h].every(n => typeof n === "number" && isFinite(n)) && b.p >= 1)
+          .map(b => ({ p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h }));
+}
 function dimFromJSON(d, id){
   const type = d.type || "穴";
   return {
     id, name: d.name || (type === "距離" ? "" + d.nominal : "φ" + d.nominal),
     tClass: d.tClass || "", nominal: parseFloat(d.nominal), upper: parseFloat(d.upper), lower: parseFloat(d.lower),
     type, qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, inReport: d.inReport !== false,
-    method: d.method || "", toolNo: d.toolNo || "", jobNo: d.jobNo || ""
+    method: d.method || "", toolNo: d.toolNo || "", jobNo: d.jobNo || "", locs: locsOf(d.locs)
   };
 }
 
@@ -199,11 +206,11 @@ function ncFromJSON(nc){
   const features = (Array.isArray(nc.features) ? nc.features : []).map(f => ({
     name:str(f.name), view:str(f.view), qty: parseInt(f.qty,10) > 1 ? parseInt(f.qty,10) : 1,
     dia:arr(f.dia), depth:arr(f.depth), thread:str(f.thread), chamfer:arr(f.chamfer),
-    gdt:arr(f.gdt), rough:str(f.rough), note:str(f.note), chk:f.chk === true
+    gdt:arr(f.gdt), rough:str(f.rough), note:str(f.note), chk:f.chk === true, locs:locsOf(f.locs)
   }));
   const dists = (Array.isArray(nc.dists) ? nc.dists : []).map(d => {
     if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("距離データの形式が不正です (nominal, upper, lower が必要)");
-    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true };
+    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true, locs:locsOf(d.locs) };
   });
   if (!features.length && !dists.length) throw new Error("ncデータ(features / dists)がありません");
   return { features, dists };
@@ -438,6 +445,14 @@ async function renderList(){
                   const ex = normalizeProject(await Store.getProject(hit.id) || hit);
                   if (ncOf(ex) && !confirm((ex.partName || dno) + " のNCデータを置き換えますか")) return;
                   ex.nc = nc;
+                  if (hasDims){
+                    const used = new Set();
+                    raw.dims.forEach(r => {
+                      const L = locsOf(r.locs); if (!L.length) return;
+                      const m = ex.dims.find(d => !used.has(d.id) && d.nominal === parseFloat(r.nominal) && d.upper === parseFloat(r.upper) && d.lower === parseFloat(r.lower));
+                      if (m){ m.locs = L; used.add(m.id); }
+                    });
+                  }
                   await Store.saveProject(ex);
                   IMPTEXT = ""; SHOWIMP = false;
                   await openProject(ex.id); TAB = "nc"; renderProject();
@@ -506,7 +521,7 @@ async function openProject(id){
   const p = await Store.getProject(id);
   if (!p) return;
   P = normalizeProject(p);
-  TAB = "meas"; EDIT = false; SHOWMERGE = false; SHOWNCIMP = false;
+  TAB = "meas"; EDIT = false; SHOWMERGE = false; SHOWNCIMP = false; DRW.sel = null; DRW.msg = "";
   if (unsub){ unsub(); unsub = null; }
   unsub = Store.onProjectSync(id, data => {
     if (data && data.updatedAt > (P.updatedAt || 0) + 2000){ Object.assign(P, data); normalizeProject(P); renderProject(); }
@@ -533,7 +548,7 @@ function renderProject(){
     h("div", { style:"min-width:180px" }, [ inP, inD ]),
     h("div", { style:"flex:1" }),
     h("div", { style:"display:flex;background:#F1F3F4;border-radius:11px;padding:3px;gap:3px" }, [
-      tabBtn("測定", "meas"), tabBtn("NC" + (ncCount ? " (" + ncCount + ")" : ""), "nc"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
+      tabBtn("測定", "meas"), tabBtn("NC" + (ncCount ? " (" + ncCount + ")" : ""), "nc"), tabBtn("図面", "draw"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
     ]),
     h("div", { style:"font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;" + (isCloud() ? "background:#E6F4EA;color:#0B7A45" : "background:#FEF7E0;color:#8A6100"), text: isCloud() ? "同期" : "ローカル" })
   ]));
@@ -542,6 +557,7 @@ function renderProject(){
   shell.appendChild(body);
   if (TAB === "meas") renderMeas(body);
   else if (TAB === "nc"){ body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderNC(body); }
+  else if (TAB === "draw"){ body.style.padding = "0"; renderDrawing(body); }
   else { body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderReport(body); }
 }
 
@@ -865,6 +881,148 @@ function buildEditor(){
 }
 
 /* ── report ── */
+/* ── drawing view: list of rows ⇄ PDF from Google Drive, tap a row → jump & highlight ── */
+const GCFG = {
+  clientId: "651216188590-o5fj6sjrionnc30p9948cp3cdu1mf326.apps.googleusercontent.com",
+  apiKey: "AIzaSyB8nZawGcMMx0kSaVw9wv57Ef75EP_CBtA",
+  appId: "651216188590",
+  scope: "https://www.googleapis.com/auth/drive.readonly"
+};
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+const DRW = { pdf:null, fileId:null, page:0, scale:0, sel:null, token:null, tokenExp:0, msg:"" };
+
+function loadScript(src){
+  return new Promise((ok, ng) => {
+    if (document.querySelector('script[src="' + src + '"]')) return ok();
+    const e = document.createElement("script"); e.src = src; e.onload = ok; e.onerror = () => ng(new Error("読み込みに失敗しました: " + src));
+    document.head.appendChild(e);
+  });
+}
+async function pdfjs(){
+  await loadScript(PDFJS + "pdf.min.js");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js";
+  return window.pdfjsLib;
+}
+async function gToken(){
+  if (DRW.token && Date.now() < DRW.tokenExp - 60000) return DRW.token;
+  await loadScript("https://accounts.google.com/gsi/client");
+  return new Promise((ok, ng) => {
+    const tc = google.accounts.oauth2.initTokenClient({
+      client_id: GCFG.clientId, scope: GCFG.scope, hint: "",
+      callback: r => { if (r.error) return ng(new Error("Googleログインに失敗しました: " + r.error)); DRW.token = r.access_token; DRW.tokenExp = Date.now() + (r.expires_in || 3600) * 1000; ok(DRW.token); },
+      error_callback: e => ng(new Error("Googleログインが中断されました" + (e && e.type ? " (" + e.type + ")" : "")))
+    });
+    tc.requestAccessToken({ prompt: "" });
+  });
+}
+async function pickDrawing(){
+  const tok = await gToken();
+  await loadScript("https://apis.google.com/js/api.js");
+  await new Promise(ok => gapi.load("picker", ok));
+  return new Promise(ok => {
+    const view = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes("application/pdf").setIncludeFolders(true);
+    new google.picker.PickerBuilder()
+      .setAppId(GCFG.appId).setDeveloperKey(GCFG.apiKey).setOAuthToken(tok).setLocale("ja")
+      .addView(view).setTitle("図面PDFを選択")
+      .setCallback(d => { if (d.action === google.picker.Action.PICKED) ok({ fileId:d.docs[0].id, name:d.docs[0].name }); else if (d.action === google.picker.Action.CANCEL) ok(null); })
+      .build().setVisible(true);
+  });
+}
+async function openPdfBytes(buf, fileId){
+  const lib = await pdfjs();
+  DRW.pdf = await lib.getDocument({ data: buf }).promise;
+  DRW.fileId = fileId; DRW.page = 0;
+}
+async function loadDrawing(fileId){
+  const tok = await gToken();
+  const r = await fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(fileId) + "?alt=media&supportsAllDrives=true", { headers:{ Authorization:"Bearer " + tok } });
+  if (!r.ok) throw new Error(r.status === 404 ? "図面ファイルが見つかりません（削除・移動・権限を確認）" : "図面の読み込みに失敗しました (" + r.status + ")");
+  await openPdfBytes(await r.arrayBuffer(), fileId);
+}
+
+function drawRows(){
+  const R = [], f = v => fmtTol(v);
+  P.dims.forEach(d => R.push({ g:"測定", n:d.name, t:f(d.upper) + " / " + f(d.lower), v:"", locs:d.locs || [] }));
+  const nc = ncOf(P);
+  if (nc){
+    nc.features.forEach(x => R.push({ g:"NC 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [] }));
+    nc.dists.forEach(x => R.push({ g:"NC 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [] }));
+  }
+  return R;
+}
+
+function renderDrawing(body){
+  const wrap = h("div", { style:"flex:1;min-height:0;display:flex;" + (innerWidth < 900 ? "flex-direction:column" : "") });
+  body.appendChild(wrap);
+  const list = h("div", { style:"flex-shrink:0;overflow-y:auto;background:#FFF;" + (innerWidth < 900 ? "height:38%;border-bottom:1px solid #DADCE0" : "width:340px;border-right:1px solid #DADCE0") });
+  const view = h("div", { style:"flex:1;min-height:0;position:relative;overflow:auto;background:#5F6368" });
+  const page = h("div", { style:"position:relative;margin:0 auto;background:#FFF" });
+  view.appendChild(page);
+  wrap.appendChild(list); wrap.appendChild(view);
+
+  // toolbar (drawing name + choose) on top of the list
+  const d = P.drawing;
+  const status = h("div", { style:"font-size:12px;color:#B3261E;margin-top:6px", text: DRW.msg });
+  list.appendChild(h("div", { style:"padding:10px 12px;border-bottom:1px solid #E8EAED;background:#F8F9FA" }, [
+    h("div", { style:"font-size:12px;color:#5F6368", text:"図面（Google Drive）" }),
+    h("div", { style:"font-size:13px;font-weight:600;word-break:break-all;margin-top:2px", text: d && d.name ? d.name : "未設定" }),
+    h("div", { style:"display:flex;gap:8px;margin-top:8px" }, [
+      h("button", { style:"height:36px;padding:0 14px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;font-size:13px;font-weight:600", text: d ? "図面を変更" : "図面を選ぶ",
+        onclick: async () => {
+          try { DRW.msg = ""; const pk = await pickDrawing(); if (!pk) return;
+            P.drawing = pk; save(); await loadDrawing(pk.fileId); renderProject();
+          } catch (e){ DRW.msg = e.message; renderProject(); }
+        } }),
+      d && DRW.fileId !== d.fileId ? h("button", { style:"height:36px;padding:0 14px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:13px;font-weight:600", text:"図面を開く",
+        onclick: async () => { try { DRW.msg = ""; await loadDrawing(d.fileId); renderProject(); } catch (e){ DRW.msg = e.message; renderProject(); } } }) : null
+    ]),
+    status
+  ]));
+
+  let last = "";
+  drawRows().forEach((r, i) => {
+    if (r.g !== last){ last = r.g; list.appendChild(h("div", { style:"font-size:12px;color:#5F6368;padding:8px 12px 4px;background:#F8F9FA;border-bottom:1px solid #E8EAED;position:sticky;top:0", text:r.g })); }
+    const on = DRW.sel === i, has = r.locs.length > 0;
+    list.appendChild(h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
+      onclick: () => { if (!has) return; DRW.sel = i; renderProject(); } }, [
+      h("span", { style:"font-weight:700;font-size:14px;white-space:nowrap", text:r.n }),
+      h("span", { style:"font-size:12px;color:#0062CC;white-space:nowrap;" + MONO, text:r.t }),
+      h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? r.v : "位置なし" })
+    ]));
+  });
+
+  if (!DRW.pdf || !d || DRW.fileId !== d.fileId){
+    page.style.background = "transparent";
+    page.appendChild(h("div", { style:"color:#FFF;font-size:14px;padding:48px 16px;text-align:center", text: d ? "「図面を開く」を押すと表示します" : "「図面を選ぶ」でGoogle Driveの図面PDFを選んでください" }));
+    return;
+  }
+  const rows = drawRows(), sel = DRW.sel != null ? rows[DRW.sel] : null;
+  const locs = sel ? sel.locs : [];
+  const pno = locs.length ? Math.min(locs[0].p, DRW.pdf.numPages) : (DRW.page || 1);
+  (async () => {
+    const pg = await DRW.pdf.getPage(pno);
+    const base = pg.getViewport({ scale:1 });
+    if (!DRW.scale) DRW.scale = Math.max(0.5, (view.clientWidth || 800) / base.width * 2.2);
+    const vp = pg.getViewport({ scale:DRW.scale });
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const c = h("canvas", { style:"display:block;width:" + vp.width + "px;height:" + vp.height + "px" });
+    c.width = vp.width * dpr; c.height = vp.height * dpr;
+    page.style.width = vp.width + "px"; page.appendChild(c);
+    await pg.render({ canvasContext:c.getContext("2d"), viewport:vp, transform: dpr !== 1 ? [dpr,0,0,dpr,0,0] : null }).promise;
+    DRW.page = pno;
+    const pad = 6;
+    locs.filter(b => b.p === pno).forEach((b, k) => page.appendChild(h("div", { class: k === 0 ? "drw-hl drw-main" : "drw-hl",
+      style:"left:" + (b.x * vp.width - pad) + "px;top:" + (b.y * vp.height - pad) + "px;width:" + (b.w * vp.width + pad * 2) + "px;height:" + (b.h * vp.height + pad * 2) + "px" })));
+    if (locs.length){ const b = locs[0]; view.scrollTo((b.x + b.w / 2) * vp.width - view.clientWidth / 2, (b.y + b.h / 2) * vp.height - view.clientHeight / 2); }
+  })().catch(e => { DRW.msg = "表示に失敗しました: " + e.message; });
+
+  const zb = (t, k) => h("button", { style:"width:44px;height:44px;border-radius:12px;border:1px solid #DADCE0;background:#FFF;font-size:20px", text:t,
+    onclick: () => { DRW.scale *= k; renderProject(); } });
+  body.appendChild(h("div", { style:"position:absolute;right:14px;bottom:14px;display:flex;gap:6px;z-index:5" }, [ zb("−", 1/1.4), zb("＋", 1.4) ]));
+  body.appendChild(h("div", { style:"position:absolute;left:" + (innerWidth < 900 ? 12 : 352) + "px;bottom:14px;background:#FFF;border-radius:10px;padding:6px 10px;font-size:12px;z-index:5", text: pno + " / " + DRW.pdf.numPages + " ページ" }));
+  body.style.position = "relative";
+}
+
 /* ── NC view (display only) ── */
 function renderNC(body){
   const inner = h("div", { style:"max-width:1280px;width:100%;margin:0 auto" });
