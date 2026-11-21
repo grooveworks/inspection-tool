@@ -21,7 +21,7 @@
    node tools/verify.js ../baseline_vX.Y.Z.html index.html ../verify_out
    ```
    - 画面差分: 頼まれた変更とバージョン表記以外に差分が出たら原因を調べる。差分のある画面は必ず画像を目で見る。
-   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D5 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。
+   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D9 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。
    - ページエラー: none。
    - 新しい挙動を足したら、`tools/verify.js` の試験にも足す。
 6. **push**: `git push -u origin feature/<内容>`（浅いクローンなので `-c push.negotiate=true` を付ける）。
@@ -38,4 +38,7 @@
 - dims のみ → 従来通り新規案件
 - `nc` は表示専用。各行の `chk`（チェック欄）は案件データに保存。取込で置換するとチェックは外れる。
 - dims / nc.features / nc.dists の各行は `locs:[{p,x,y,w,h}]`（図面上の位置、ページ番号と0〜1の割合）を持てる。同じ図番の再取込では既存寸法に locs だけ反映（値・測定値は保持）。
-- 図面タブ: 案件の `drawing:{fileId,name}` に Google Drive の図面PDFを紐づけ、行タップで該当位置を表示。設定値（Cloudプロジェクト inspection-tool-515411、OAuthクライアントID、APIキー）は index.html の `GCFG`。APIキーは Drive/Picker のみ・grooveworks.github.io/inspection-tool/* のみに制限済み。
+- 図面タブ: 案件の `drawing:{fileId,name}` に Google Drive の図面PDFを紐づけ、行タップで該当位置を表示。設定値（Cloudプロジェクト inspection-tool-515411、OAuthクライアントID、APIキー）は index.html の `GCFG`。APIキーは Drive/Picker のみ・リファラ https://grooveworks.github.io/* のみに制限済み（/inspection-tool/* まで絞ると Picker が「デベロッパーキーが無効」になる）。
+- 図面の紐づけは取込JSONの `drawing:{fileId,name}` で行う（v2.4.0〜）。抽出時に Claude が図面PDFを Drive の「寸法検査_図面」フォルダ（ID 1kg33mlBqbkuF377u1Dn7zZie7u98mEgA）へ入れ、その fileId を JSON に書く。ユーザーに Drive 操作をさせない。
+  - 同じ図番の案件がある & `drawing` あり → 図面だけ紐づけ直す（ncなしなら NC は触らない）。`drawing` だけで該当案件なし → エラー。
+  - 手動の「図面を選ぶ」はフォルダ一覧を出さない（PDFのみ・一覧表示・図番の先頭2区切りで検索済み）。

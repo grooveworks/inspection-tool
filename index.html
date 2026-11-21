@@ -25,7 +25,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.3.0";
+const VER = "v2.4.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -187,6 +187,11 @@ function locsOf(v){
   if (!Array.isArray(v)) return [];
   return v.filter(b => b && [b.p,b.x,b.y,b.w,b.h].every(n => typeof n === "number" && isFinite(n)) && b.p >= 1)
           .map(b => ({ p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h }));
+}
+// linked drawing file on Google Drive: {fileId, name} — anything else → null
+function drawingOf(v){
+  if (!v || typeof v !== "object" || typeof v.fileId !== "string" || !v.fileId.trim()) return null;
+  return { fileId: v.fileId.trim(), name: typeof v.name === "string" ? v.name : "" };
 }
 function dimFromJSON(d, id){
   const type = d.type || "穴";
@@ -434,17 +439,21 @@ async function renderList(){
               try { raw = JSON.parse(IMPTEXT); } catch(e){ throw new Error("JSONの形式が不正です"); }
               const hasDims = Array.isArray(raw.dims) && raw.dims.length > 0;
               const nc = raw.nc ? ncFromJSON(raw.nc) : null;
-              if (!hasDims && !nc) throw new Error("寸法データ(dims)またはNCデータ(nc)がありません");
+              const drw = drawingOf(raw.drawing);
+              if (!hasDims && !nc && !drw) throw new Error("寸法データ(dims)またはNCデータ(nc)がありません");
               const dno = String(raw.drawingNo || "").trim();
-              // same drawing number already exists -> update its NC data only (dims / measurements untouched)
-              if (nc && dno){
+              // same drawing number already exists -> update its NC data / drawing link only (dims / measurements untouched)
+              if ((nc || drw) && dno){
                 const hit = (await Store.listProjects())
                   .filter(x => String(x.drawingNo || "").trim() === dno)
                   .sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
                 if (hit){
                   const ex = normalizeProject(await Store.getProject(hit.id) || hit);
-                  if (ncOf(ex) && !confirm((ex.partName || dno) + " のNCデータを置き換えますか")) return;
-                  ex.nc = nc;
+                  if (nc){
+                    if (ncOf(ex) && !confirm((ex.partName || dno) + " のNCデータを置き換えますか")) return;
+                    ex.nc = nc;
+                  }
+                  if (drw) ex.drawing = drw;
                   if (hasDims){
                     const used = new Set();
                     raw.dims.forEach(r => {
@@ -455,15 +464,17 @@ async function renderList(){
                   }
                   await Store.saveProject(ex);
                   IMPTEXT = ""; SHOWIMP = false;
-                  await openProject(ex.id); TAB = "nc"; renderProject();
+                  await openProject(ex.id); TAB = nc ? "nc" : "draw"; renderProject();
                   return;
                 }
               }
               if (hasDims) parseImport(IMPTEXT);   // same dims validation as before
-              else if (!dno) throw new Error("NCデータだけの場合は図番(drawingNo)が必要です");
+              else if (!dno) throw new Error("NCデータ・図面だけの場合は図番(drawingNo)が必要です");
+              else if (!nc) throw new Error("図番 " + dno + " の案件がありません");
               const p = newProject({ partName:raw.partName, drawingNo:raw.drawingNo, preset:false, rounds:NF.rounds });
               p.dims = hasDims ? raw.dims.map((x,i) => dimFromJSON(x, i+1)) : [];
               if (nc) p.nc = nc;
+              if (drw) p.drawing = drw;
               normalizeProject(p);
               await Store.saveProject(p);
               IMPTEXT = ""; SHOWIMP = false;
@@ -920,7 +931,10 @@ async function pickDrawing(){
   await loadScript("https://apis.google.com/js/api.js");
   await new Promise(ok => gapi.load("picker", ok));
   return new Promise(ok => {
-    const view = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes("application/pdf").setIncludeFolders(true);
+    // no folder browsing: PDFs only, list view, pre-searched by the drawing number (e.g. "0U9W-46311-A3" → "0U9W-46311")
+    const dno = String(P && P.drawingNo || "").trim(), q = dno.includes("-") ? dno.split("-").slice(0, 2).join("-") : dno;
+    const view = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes("application/pdf").setIncludeFolders(false).setMode(google.picker.DocsViewMode.LIST);
+    if (q) view.setQuery(q);
     new google.picker.PickerBuilder()
       .setAppId(GCFG.appId).setDeveloperKey(GCFG.apiKey).setOAuthToken(tok).setLocale("ja")
       .addView(view).setTitle("図面PDFを選択")

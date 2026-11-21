@@ -120,6 +120,8 @@ async function drawingTests(browser, html, errs) {
   await pg.click('button:text-is("図面を選ぶ")'); await pg.waitForTimeout(3000);
   p = await sp();
   ok('D2 図面を選ぶ → 案件に図面が紐づく', p.drawing && p.drawing.fileId === 'FILE123', JSON.stringify(p.drawing));
+  const pv = await pg.evaluate(() => window.__pickerView || {});
+  ok('D6 選択画面はフォルダなし・一覧表示・図番で検索済み', pv.folders === false && pv.mode === 'list' && pv.query === 'DT-1' && pv.mime === 'application/pdf', JSON.stringify(pv));
   ok('D3 Drive読込にログイントークンが付く', auth === 'Bearer TESTTOKEN', auth);
   await pg.click('text=φ10 >> nth=0'); await pg.waitForTimeout(1500);
   const lbl = await pg.textContent('text=/ページ/').catch(() => '');
@@ -130,6 +132,21 @@ async function drawingTests(browser, html, errs) {
   await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j2)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700);
   const all = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).filter(p => p.drawingNo === 'DT-1'));
   ok('D5 同じ図番の再取込 → 既存の寸法に位置だけ更新・案件増えない', all.length === 1 && all[0].dims[0].locs[0].x === 0.3 && all[0].dims[0].upper === 0.02 && all[0].drawing.fileId === 'FILE123');
+  // drawing link inside the import JSON
+  const impJ = async v => { if (await pg.$('text=←')) { await pg.click('text=←'); await pg.waitForTimeout(300); }
+    await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(v)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700); };
+  const j3 = { partName:'DRAWTEST2', drawingNo:'DT-2', dims:j.dims, drawing:{ fileId:'FILE_NEW', name:'DT-2.pdf' } };
+  await impJ(j3);
+  let q = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).filter(p => p.drawingNo === 'DT-2'));
+  ok('D7 取込JSONの drawing → 新規案件に図面が紐づく', q.length === 1 && q[0].drawing && q[0].drawing.fileId === 'FILE_NEW', JSON.stringify(q.map(x => x.drawing)));
+  const nBefore = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).length);
+  await impJ({ drawingNo:'DT-1', dims:j.dims, drawing:{ fileId:'FILE_RELINK', name:'DT-1.pdf' } });
+  q = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')));
+  const d1 = q.filter(p => p.drawingNo === 'DT-1');
+  ok('D8 既存図番に dims+drawing（ncなし）→ 図面だけ紐づけ・案件増えない・NC保持', q.length === nBefore && d1.length === 1 && d1[0].drawing.fileId === 'FILE_RELINK' && d1[0].nc.features.length === 1 && d1[0].dims[0].upper === 0.02, JSON.stringify(d1.map(x => x.drawing)));
+  await impJ({ drawingNo:'NOPE-9', drawing:{ fileId:'X' } });
+  const m = await pg.evaluate(() => { const t = document.querySelector('textarea'); return t ? t.nextElementSibling.textContent : ''; });
+  ok('D9 図面だけ（該当図番なし）→ エラー・案件増えない', /案件がありません/.test(m) && (await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).length)) === nBefore, m);
   await pg.close();
   return R;
 }
