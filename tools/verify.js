@@ -123,6 +123,8 @@ async function drawingTests(browser, html, errs) {
   const pv = await pg.evaluate(() => window.__pickerView || {});
   ok('D6 選択画面はフォルダなし・一覧表示・図番で検索済み', pv.folders === false && pv.mode === 'list' && pv.query === 'DT-1' && pv.mime === 'application/pdf', JSON.stringify(pv));
   ok('D3 Drive読込にログイントークンが付く', auth === 'Bearer TESTTOKEN', auth);
+  const tc = await pg.evaluate(() => window.__tokenCfg || {});
+  ok('D10 Googleログインは info-manager@groove-works.jp を指定（アカウント選択を出さない）', tc.login_hint === 'info-manager@groove-works.jp' && tc.hd === 'groove-works.jp', JSON.stringify(tc));
   await pg.click('text=φ10 >> nth=0'); await pg.waitForTimeout(1500);
   const lbl = await pg.textContent('text=/ページ/').catch(() => '');
   ok('D4 行タップ → 該当ページへ移動して枠が出る', /^2 \//.test(lbl) && (await pg.$$('.drw-hl')).length === 1, lbl);

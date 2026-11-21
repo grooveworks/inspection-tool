@@ -25,7 +25,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.4.0";
+const VER = "v2.4.1";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -897,7 +897,8 @@ const GCFG = {
   clientId: "651216188590-o5fj6sjrionnc30p9948cp3cdu1mf326.apps.googleusercontent.com",
   apiKey: "AIzaSyB8nZawGcMMx0kSaVw9wv57Ef75EP_CBtA",
   appId: "651216188590",
-  scope: "https://www.googleapis.com/auth/drive.readonly"
+  scope: "https://www.googleapis.com/auth/drive.readonly",
+  account: "info-manager@groove-works.jp", domain: "groove-works.jp"   // drawings live in this account's Drive
 };
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
 const DRW = { pdf:null, fileId:null, page:0, scale:0, sel:null, token:null, tokenExp:0, msg:"" };
@@ -919,7 +920,7 @@ async function gToken(){
   await loadScript("https://accounts.google.com/gsi/client");
   return new Promise((ok, ng) => {
     const tc = google.accounts.oauth2.initTokenClient({
-      client_id: GCFG.clientId, scope: GCFG.scope, hint: "",
+      client_id: GCFG.clientId, scope: GCFG.scope, login_hint: GCFG.account, hd: GCFG.domain,   // skip the account chooser
       callback: r => { if (r.error) return ng(new Error("Googleログインに失敗しました: " + r.error)); DRW.token = r.access_token; DRW.tokenExp = Date.now() + (r.expires_in || 3600) * 1000; ok(DRW.token); },
       error_callback: e => ng(new Error("Googleログインが中断されました" + (e && e.type ? " (" + e.type + ")" : "")))
     });
