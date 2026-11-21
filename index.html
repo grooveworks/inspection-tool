@@ -25,7 +25,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.5.0";
+const VER = "v2.5.1";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -612,6 +612,7 @@ function renderProject(){
 
   const body = h("div", { style:"flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:8px 6px" });
   shell.appendChild(body);
+  if (TAB !== "draw" && DRW.cv){ DRW.cv.canvas.width = DRW.cv.canvas.height = 0; DRW.cv = null; }   // free memory when leaving the drawing tab
   if (TAB === "meas") renderMeas(body);
   else if (TAB === "nc"){ body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderNC(body); }
   else if (TAB === "draw"){ body.style.padding = "0"; renderDrawing(body); }
@@ -947,7 +948,7 @@ const GCFG = {
   account: "info-manager@groove-works.jp", domain: "groove-works.jp"   // drawings live in this account's Drive
 };
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
-const DRW = { pdf:null, fileId:null, page:0, scale:0, sel:null, token:null, tokenExp:0, msg:"" };
+const DRW = { pdf:null, fileId:null, page:0, scale:0, sel:null, token:null, tokenExp:0, msg:"", cv:null, tok:0 };   // cv = last rendered page (canvas cache)
 
 function loadScript(src){
   return new Promise((ok, ng) => {
@@ -1040,16 +1041,21 @@ function renderDrawing(body){
     status
   ]));
 
+  // rows: tapping one only moves the red box (no full re-render → list keeps its scroll, drawing is not redrawn)
+  const rows = drawRows(), rowEls = [];
   let last = "";
-  drawRows().forEach((r, i) => {
+  rows.forEach((r, i) => {
     if (r.g !== last){ last = r.g; list.appendChild(h("div", { style:"font-size:12px;color:#5F6368;padding:8px 12px 4px;background:#F8F9FA;border-bottom:1px solid #E8EAED;position:sticky;top:0", text:r.g })); }
     const on = DRW.sel === i, has = r.locs.length > 0;
-    list.appendChild(h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
-      onclick: () => { if (!has) return; DRW.sel = i; renderProject(); } }, [
+    const el = h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
+      onclick: () => { if (!has) return;
+        if (DRW.sel != null && rowEls[DRW.sel]) rowEls[DRW.sel].style.background = "";
+        DRW.sel = i; el.style.background = "#E1F0FF"; show(); } }, [
       h("span", { style:"font-weight:700;font-size:14px;white-space:nowrap", text:r.n }),
       h("span", { style:"font-size:12px;color:#0062CC;white-space:nowrap;" + MONO, text:r.t }),
       h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? r.v : "位置なし" })
-    ]));
+    ]);
+    rowEls[i] = el; list.appendChild(el);
   });
 
   if (!DRW.pdf || !d || DRW.fileId !== d.fileId){
@@ -1057,31 +1063,45 @@ function renderDrawing(body){
     page.appendChild(h("div", { style:"color:#FFF;font-size:14px;padding:48px 16px;text-align:center", text: d ? "「図面を開く」を押すと表示します" : "「図面を選ぶ」でGoogle Driveの図面PDFを選んでください" }));
     return;
   }
-  const rows = drawRows(), sel = DRW.sel != null ? rows[DRW.sel] : null;
-  const locs = sel ? sel.locs : [];
-  const pno = locs.length ? Math.min(locs[0].p, DRW.pdf.numPages) : (DRW.page || 1);
-  (async () => {
-    const pg = await DRW.pdf.getPage(pno);
-    const base = pg.getViewport({ scale:1 });
-    if (!DRW.scale) DRW.scale = Math.max(0.5, (view.clientWidth || 800) / base.width * 2.2);
-    const vp = pg.getViewport({ scale:DRW.scale });
-    const dpr = Math.min(2, devicePixelRatio || 1);
-    const c = h("canvas", { style:"display:block;width:" + vp.width + "px;height:" + vp.height + "px" });
-    c.width = vp.width * dpr; c.height = vp.height * dpr;
-    page.style.width = vp.width + "px"; page.appendChild(c);
-    await pg.render({ canvasContext:c.getContext("2d"), viewport:vp, transform: dpr !== 1 ? [dpr,0,0,dpr,0,0] : null }).promise;
-    DRW.page = pno;
-    const pad = 6;
-    locs.filter(b => b.p === pno).forEach((b, k) => page.appendChild(h("div", { class: k === 0 ? "drw-hl drw-main" : "drw-hl",
-      style:"left:" + (b.x * vp.width - pad) + "px;top:" + (b.y * vp.height - pad) + "px;width:" + (b.w * vp.width + pad * 2) + "px;height:" + (b.h * vp.height + pad * 2) + "px" })));
-    if (locs.length){ const b = locs[0]; view.scrollTo((b.x + b.w / 2) * vp.width - view.clientWidth / 2, (b.y + b.h / 2) * vp.height - view.clientHeight / 2); }
-  })().catch(e => { DRW.msg = "表示に失敗しました: " + e.message; });
 
+  const pageLbl = h("div", { style:"position:absolute;left:" + (innerWidth < 900 ? 12 : 352) + "px;bottom:14px;background:#FFF;border-radius:10px;padding:6px 10px;font-size:12px;z-index:5" });
   const zb = (t, k) => h("button", { style:"width:44px;height:44px;border-radius:12px;border:1px solid #DADCE0;background:#FFF;font-size:20px", text:t,
-    onclick: () => { DRW.scale *= k; renderProject(); } });
+    onclick: () => { if (DRW.scale){ DRW.scale *= k; show(); } } });
   body.appendChild(h("div", { style:"position:absolute;right:14px;bottom:14px;display:flex;gap:6px;z-index:5" }, [ zb("−", 1/1.4), zb("＋", 1.4) ]));
-  body.appendChild(h("div", { style:"position:absolute;left:" + (innerWidth < 900 ? 12 : 352) + "px;bottom:14px;background:#FFF;border-radius:10px;padding:6px 10px;font-size:12px;z-index:5", text: pno + " / " + DRW.pdf.numPages + " ページ" }));
+  body.appendChild(pageLbl);
   body.style.position = "relative";
+  show();
+
+  // draw the page only when page / zoom / file changed (cached in DRW.cv); otherwise just move the boxes
+  function show(){
+    const sel = DRW.sel != null ? rows[DRW.sel] : null, locs = sel ? sel.locs : [];
+    const pno = locs.length ? Math.min(locs[0].p, DRW.pdf.numPages) : (DRW.page || 1);
+    pageLbl.textContent = pno + " / " + DRW.pdf.numPages + " ページ";
+    const token = DRW.tok = (DRW.tok || 0) + 1;
+    (async () => {
+      let cv = DRW.cv;
+      if (!cv || cv.pdf !== DRW.pdf || cv.page !== pno || !DRW.scale || cv.scale !== DRW.scale){
+        const pg = await DRW.pdf.getPage(pno);
+        const base = pg.getViewport({ scale:1 });
+        if (!DRW.scale) DRW.scale = Math.max(0.5, (view.clientWidth || 800) / base.width * 2.2);
+        const vp = pg.getViewport({ scale:DRW.scale });
+        const dpr = Math.min(2, devicePixelRatio || 1);
+        const c = h("canvas", { style:"display:block;width:" + vp.width + "px;height:" + vp.height + "px" });
+        c.width = vp.width * dpr; c.height = vp.height * dpr;
+        await pg.render({ canvasContext:c.getContext("2d"), viewport:vp, transform: dpr !== 1 ? [dpr,0,0,dpr,0,0] : null }).promise;
+        if (token !== DRW.tok){ c.width = c.height = 0; return; }          // a newer tap/zoom took over
+        if (DRW.cv && DRW.cv.canvas !== c) DRW.cv.canvas.width = DRW.cv.canvas.height = 0;   // free the old bitmap
+        cv = DRW.cv = { pdf:DRW.pdf, page:pno, scale:DRW.scale, canvas:c, w:vp.width, h:vp.height };
+      }
+      if (token !== DRW.tok) return;
+      DRW.page = pno;
+      page.innerHTML = ""; page.style.width = cv.w + "px"; page.appendChild(cv.canvas);
+      const pad = 6;
+      locs.filter(b => b.p === pno).forEach((b, k) => page.appendChild(h("div", { class: k === 0 ? "drw-hl drw-main" : "drw-hl",
+        style:"left:" + (b.x * cv.w - pad) + "px;top:" + (b.y * cv.h - pad) + "px;width:" + (b.w * cv.w + pad * 2) + "px;height:" + (b.h * cv.h + pad * 2) + "px" })));
+      if (locs.length){ const b = locs[0]; view.scrollTo((b.x + b.w / 2) * cv.w - view.clientWidth / 2, (b.y + b.h / 2) * cv.h - view.clientHeight / 2); }
+    })().catch(e => { DRW.msg = "表示に失敗しました: " + e.message; status.textContent = DRW.msg; });
+  }
 }
 
 /* ── NC view (display only) ── */

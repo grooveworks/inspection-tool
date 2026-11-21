@@ -110,7 +110,7 @@ async function drawingTests(browser, html, errs) {
   await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
   const j = { partName:'DRAWTEST', drawingNo:'DT-1',
     dims:[{ name:'φ10', nominal:10, upper:0.02, lower:0, type:'穴', locs:[{p:2,x:0.5,y:0.5,w:0.04,h:0.02}] }],
-    nc:{ features:[{ name:'穴A', view:'A-A', dia:['φ10'], locs:[{p:1,x:0.1,y:0.1,w:0.05,h:0.03}] }], dists:[] } };
+    nc:{ features:[{ name:'穴A', view:'A-A', dia:['φ10'], locs:[{p:1,x:0.1,y:0.1,w:0.05,h:0.03}] }], dists:[{ nominal:5, upper:0.1, lower:0, view:'A-A', locs:[{p:1,x:0.6,y:0.6,w:0.03,h:0.02}] }] } };
   await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(600);
   const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
   const sp = () => pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'DT-1'));
@@ -128,6 +128,24 @@ async function drawingTests(browser, html, errs) {
   await pg.click('text=φ10 >> nth=0'); await pg.waitForTimeout(1500);
   const lbl = await pg.textContent('text=/ページ/').catch(() => '');
   ok('D4 行タップ → 該当ページへ移動して枠が出る', /^2 \//.test(lbl) && (await pg.$$('.drw-hl')).length === 1, lbl);
+  // same page → the drawing is not redrawn, only the box moves; the list is not rebuilt
+  const rowSel = t => 'div[style*="cursor: pointer"]:has(span:text-is("' + t + '"))';
+  await pg.click(rowSel('穴A')); await pg.waitForTimeout(1500);
+  await pg.evaluate(() => { document.querySelector('canvas').__mark = 1; document.querySelector('div[style*="cursor: pointer"]').__mark = 1; });
+  const box = () => pg.evaluate(() => { const e = document.querySelector('.drw-main'); return e ? Math.round(parseFloat(e.style.left)) : null; });
+  const b1 = await box();
+  const t0 = Date.now(); await pg.click(rowSel('5')); await pg.waitForFunction(b => { const e = document.querySelector('.drw-main'); return e && Math.round(parseFloat(e.style.left)) !== b; }, b1, { timeout:5000 }).catch(() => {});
+  const tSame = Date.now() - t0;
+  const same = await pg.evaluate(() => ({ canvas: document.querySelector('canvas').__mark === 1, list: document.querySelector('div[style*="cursor: pointer"]').__mark === 1, boxes: document.querySelectorAll('.drw-hl').length, sel: [...document.querySelectorAll('div[style*="cursor: pointer"]')].filter(e => e.style.background).length }));
+  ok('D11 同じページの行タップ → 図面は描き直さず枠だけ移動・一覧も作り直さない', same.canvas && same.list && same.boxes === 1 && same.sel === 1 && (await box()) !== b1, JSON.stringify(same) + ' ' + tSame + 'ms');
+  const w0 = await pg.evaluate(() => document.querySelector('canvas').width);
+  await pg.click('button:text-is("＋")'); await pg.waitForFunction(w => { const c = document.querySelector('canvas'); return c && c.width > w; }, w0, { timeout:10000 }).catch(() => {});
+  const z = await pg.evaluate(() => ({ w: document.querySelector('canvas').width, boxes: document.querySelectorAll('.drw-hl').length, lbl: document.body.innerText.match(/\d+ \/ \d+ ページ/)[0] }));
+  ok('D12 拡大＋ → その倍率で描き直し・枠とページ表示はそのまま', z.w > w0 && z.boxes === 1 && /^1 \//.test(z.lbl), w0 + '→' + JSON.stringify(z));
+  await pg.click('button:text-is("測定")'); await pg.waitForTimeout(200);
+  const freed = await pg.evaluate(() => DRW.cv === null);
+  await pg.click('button:text-is("図面")'); await pg.waitForSelector('.drw-hl', { timeout:10000 }).catch(() => {});
+  ok('D13 他のタブへ移ると図面のメモリを解放・戻ると再表示', freed && (await pg.$$('.drw-hl')).length === 1 && (await pg.$$('canvas')).length === 1, 'freed=' + freed);
   // existing drawing number: locs attach to existing dims without touching values
   const j2 = JSON.parse(JSON.stringify(j)); j2.dims[0].locs = [{p:1,x:0.3,y:0.3,w:0.02,h:0.02}];
   await pg.click('text=←'); await pg.waitForTimeout(300);

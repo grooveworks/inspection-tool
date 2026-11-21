@@ -21,7 +21,7 @@
    node tools/verify.js ../baseline_vX.Y.Z.html index.html ../verify_out
    ```
    - 画面差分: 頼まれた変更とバージョン表記以外に差分が出たら原因を調べる。差分のある画面は必ず画像を目で見る。
-   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D10 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。一覧の読込試験: C1〜C7 すべて OK（Firebase SDK と Firestore REST を差し替え）。
+   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D13 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。一覧の読込試験: C1〜C7 すべて OK（Firebase SDK と Firestore REST を差し替え）。
    - ページエラー: none。
    - 新しい挙動を足したら、`tools/verify.js` の試験にも足す。
 6. **push**: `git push -u origin feature/<内容>`（浅いクローンなので `-c push.negotiate=true` を付ける）。
