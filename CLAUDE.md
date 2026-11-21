@@ -21,7 +21,7 @@
    node tools/verify.js ../baseline_vX.Y.Z.html index.html ../verify_out
    ```
    - 画面差分: 頼まれた変更とバージョン表記以外に差分が出たら原因を調べる。差分のある画面は必ず画像を目で見る。
-   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D10 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。
+   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D10 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。一覧の読込試験: C1〜C7 すべて OK（Firebase SDK と Firestore REST を差し替え）。
    - ページエラー: none。
    - 新しい挙動を足したら、`tools/verify.js` の試験にも足す。
 6. **push**: `git push -u origin feature/<内容>`（浅いクローンなので `-c push.negotiate=true` を付ける）。
@@ -29,6 +29,11 @@
    - 浅いクローンで「non-fast-forward」と出たら `git fetch --depth=10 origin <ブランチ>` で履歴を足してから再実行。
 8. **公開確認**: 公開URLの `const VER` が新しい番号になるまで待ち、公開ファイルとコミットの `index.html` が完全一致することを `cmp` で確認。
 9. **報告**: 何を変えたか／何を検証したか（事実）／未確認のこと。main に入れたかどうかを必ず明記。
+
+## 一覧の読込（v2.5.0〜）
+- 起動時は前回の一覧（localStorage `_listCache`）をすぐ表示し、最新が届いたら差し替える。`_projects`（端末内データ）とは別キーで、上書きしない。
+- 一覧の取得は Firestore REST（1回のHTTPS GET）を先に使い、失敗したら SDK の `orderBy("updatedAt","desc").get()` に戻る。REST の結果は SDK と同じ形に変換（更新日時のない文書は除外）。
+- 案件を開く・保存・同期は従来どおり SDK。
 
 ## データ形式（取込JSON）
 抽出の手順と形式の正本はプロジェクトの「図面公差抽出ナレッジ.md」。アプリ側の要点だけ記す。

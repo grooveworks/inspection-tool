@@ -25,7 +25,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.4.1";
+const VER = "v2.5.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -46,21 +46,58 @@ const LS = "_projects";
 const lsList = () => { try { return JSON.parse(localStorage.getItem(LS) || "[]"); } catch(e){ return []; } };
 const lsWrite = (l) => localStorage.setItem(LS, JSON.stringify(l));
 
+// last cloud list, shown instantly on the next start (separate key: _projects is never overwritten by it)
+const LC = "_listCache";
+const lcList = () => { try { const v = JSON.parse(localStorage.getItem(LC) || "null"); return Array.isArray(v) ? v : null; } catch(e){ return null; } };
+const lcWrite = (l) => { try { localStorage.setItem(LC, JSON.stringify(l)); } catch(e){} };
+const lcEdit = (fn) => { const l = lcList(); if (l) lcWrite(fn(l)); };
+
+// cloud list in one plain HTTPS request (Firestore REST) — much faster to first data than the SDK channel
+function fsVal(v){
+  if ("mapValue" in v){ const o = {}, f = v.mapValue.fields || {}; for (const k in f) o[k] = fsVal(f[k]); return o; }
+  if ("arrayValue" in v) return (v.arrayValue.values || []).map(fsVal);
+  if ("stringValue" in v) return v.stringValue;
+  if ("integerValue" in v) return Number(v.integerValue);
+  if ("doubleValue" in v) return Number(v.doubleValue);
+  if ("booleanValue" in v) return v.booleanValue;
+  if ("nullValue" in v) return null;
+  throw new Error("unsupported Firestore value: " + Object.keys(v).join(","));   // → SDK fallback
+}
+async function fsRestList(){
+  const base = "https://firestore.googleapis.com/v1/projects/" + FB.projectId + "/databases/(default)/documents/projects?pageSize=300";
+  const out = []; let tok = "";
+  do {
+    const r = await fetch(base + (tok ? "&pageToken=" + encodeURIComponent(tok) : ""));
+    if (!r.ok) throw new Error("Firestore REST " + r.status);
+    const j = await r.json();
+    (j.documents || []).forEach(d => out.push(Object.assign({ id: d.name.split("/").pop() }, fsVal({ mapValue: d }))));
+    tok = j.nextPageToken || "";
+  } while (tok);
+  // same result as the SDK query orderBy("updatedAt","desc"): docs without updatedAt are left out
+  return out.filter(p => typeof p.updatedAt === "number").sort((a,b) => b.updatedAt - a.updatedAt);
+}
+
 const Store = {
   async listProjects(){
-    if (useFB) { try { const s = await db.collection("projects").orderBy("updatedAt","desc").get(); return s.docs.map(d=>({id:d.id,...d.data()})); } catch(e){ console.error(e); } }
+    if (useFB) {
+      try { const l = await fsRestList(); lcWrite(l); return l; } catch(e){ console.warn("REST list failed, using SDK", e); }
+      try { const s = await db.collection("projects").orderBy("updatedAt","desc").get(); const l = s.docs.map(d=>({id:d.id,...d.data()})); lcWrite(l); return l; } catch(e){ console.error(e); }
+    }
     return lsList();
   },
+  cachedList(){ return useFB ? lcList() : lsList(); },
   async saveProject(p){
     p.updatedAt = Date.now();
     if (useFB) { try { await db.collection("projects").doc(p.id).set(JSON.parse(JSON.stringify(p))); } catch(e){ console.error(e); } }
     const list = lsList(); const i = list.findIndex(x=>x.id===p.id);
     if (i>=0) list[i]=p; else list.unshift(p);
     lsWrite(list);
+    lcEdit(l => [p].concat(l.filter(x => x.id !== p.id)));
   },
   async deleteProject(id){
     if (useFB) { try { await db.collection("projects").doc(id).delete(); } catch(e){ console.error(e); } }
     lsWrite(lsList().filter(x=>x.id!==id));
+    lcEdit(l => l.filter(x => x.id !== id));
   },
   async getProject(id){
     if (useFB) { try { const d = await db.collection("projects").doc(id).get(); if (d.exists) return {id:d.id,...d.data()}; } catch(e){ console.error(e); } }
@@ -490,9 +527,17 @@ async function renderList(){
 
   const holder = h("div", { style:"display:flex;flex-direction:column;gap:8px" });
   wrap.appendChild(holder);
-  holder.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px", text:"読み込み中" }));
+  // show the last list at once, then replace it when the fresh one arrives (only if it changed and this screen is still shown)
+  const cached = Store.cachedList();
+  let shown = null;
+  if (cached && cached.length){ drawCards(cached); shown = JSON.stringify(cached); }
+  else holder.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px", text:"読み込み中" }));
 
   const list = await Store.listProjects();
+  if (!holder.isConnected || JSON.stringify(list) === shown) return;
+  drawCards(list);
+
+  function drawCards(list){
   holder.innerHTML = "";
   if (!list.length){
     holder.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px", text:"案件がまだありません" }));
@@ -526,6 +571,7 @@ async function renderList(){
     ]);
     holder.appendChild(card);
   });
+  }
 }
 
 async function openProject(id){

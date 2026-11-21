@@ -153,6 +153,64 @@ async function drawingTests(browser, html, errs) {
   return R;
 }
 
+// cloud mode: Firebase SDK stubbed (tools/stubs/firebase-*.js), Firestore REST answered from the same in-memory data
+const toFs = v => v === null ? { nullValue:null } : Array.isArray(v) ? { arrayValue:{ values:v.map(toFs) } }
+  : typeof v === 'object' ? { mapValue:{ fields:Object.fromEntries(Object.entries(v).map(([k,x]) => [k, toFs(x)])) } }
+  : typeof v === 'number' ? (Number.isInteger(v) ? { integerValue:String(v) } : { doubleValue:v })
+  : typeof v === 'boolean' ? { booleanValue:v } : { stringValue:String(v) };
+async function cloudListTests(browser, html, errs) {
+  const st = path.join(__dirname, 'stubs');
+  const cloud = [
+    { ...seed, id:'c1', partName:'クラウド案件A', updatedAt:2000 },
+    { ...seed, id:'c2', partName:'クラウド案件B', updatedAt:3000, drawing:{ fileId:'F', name:'b.pdf' } },
+    { id:'c0', partName:'更新日時なし', drawingNo:'X', dims:[], meas:{} }          // the SDK query leaves this out
+  ];
+  const ctx = await browser.newContext({ viewport:{ width:1280, height:900 } });
+  const pg = await ctx.newPage(); pg.on('pageerror', e => errs.push('cloud: ' + e.message)); pg.on('dialog', d => d.accept());
+  let rest = { docs: cloud, delay: 0, fail: false }, restCalls = 0;
+  await pg.route(/firebase-app-compat\.js/, r => r.fulfill({ path:path.join(st,'firebase-app.js'), contentType:'application/javascript' }));
+  await pg.route(/firebase-firestore-compat\.js/, r => r.fulfill({ path:path.join(st,'firebase-firestore.js'), contentType:'application/javascript' }));
+  await pg.route(/firestore\.googleapis\.com\/v1\//, async r => { restCalls++;
+    if (rest.delay) await new Promise(ok => setTimeout(ok, rest.delay));
+    if (rest.fail) return r.fulfill({ status:500, body:'{}' });
+    r.fulfill({ status:200, contentType:'application/json', headers:{ 'access-control-allow-origin':'*' },
+      body: JSON.stringify({ documents: rest.docs.map(d => ({ name:'projects/databases/(default)/documents/projects/' + d.id, ...toFs(d).mapValue })) }) }); });
+  await pg.addInitScript(c => { window.__fsSeed = c; }, cloud);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const cards = () => pg.$$eval('div[style*="cursor: pointer"] div[style*="font-size: 17px"]', e => e.map(x => x.textContent));
+  const load = async () => { const t = Date.now(); await pg.goto('file://' + path.resolve(html)); await pg.waitForSelector('text=クラウド案件', { timeout:15000 }); return Date.now() - t; };
+
+  await load(); await pg.waitForTimeout(300);
+  let c = await cards(), calls = await pg.evaluate(() => window.__fsStore.calls);
+  ok('C1 初回（キャッシュなし）→ 1回の問い合わせ(REST)で一覧表示・SDKの一覧読込は使わない', c.join() === 'クラウド案件B,クラウド案件A' && restCalls === 1 && !calls.includes('sdk-list'), c.join() + ' rest=' + restCalls + ' ' + calls);
+  const eq = await pg.evaluate(async () => { const n = v => Array.isArray(v) ? v.map(n) : (v && typeof v === 'object') ? Object.keys(v).sort().reduce((o,k)=>(o[k]=n(v[k]),o),{}) : v;
+    const a = await fsRestList(); const s = await db.collection('projects').orderBy('updatedAt','desc').get(); const b = s.docs.map(d => ({ id:d.id, ...d.data() }));
+    return JSON.stringify(n(a)) === JSON.stringify(n(b)); });
+  ok('C2 REST の読込結果が SDK と完全一致（数値・入れ子・更新日時なしの除外）', eq);
+  rest.delay = 3000; rest.docs = cloud.concat([{ ...seed, id:'c3', partName:'クラウド案件C(他端末で追加)', updatedAt:4000 }]);
+  const tShow = await load(); c = await cards();
+  ok('C3 2回目の起動 → 前回の一覧がすぐ出る（REST 3秒遅延でも）', tShow < 1500 && c.join() === 'クラウド案件B,クラウド案件A', tShow + 'ms ' + c.join());
+  await pg.waitForSelector('text=クラウド案件C(他端末で追加)', { timeout:8000 }).catch(() => {}); c = await cards();
+  ok('C4 最新が届いたら一覧が差し替わる', c[0] === 'クラウド案件C(他端末で追加)' && c.length === 3, c.join());
+  rest.delay = 0; rest.fail = true; await pg.evaluate(() => localStorage.removeItem('_listCache'));
+  await load(); await pg.waitForTimeout(300); c = await cards(); calls = await pg.evaluate(() => window.__fsStore.calls);
+  ok('C5 REST が失敗 → SDK で一覧表示（従来の読み方）', calls.includes('sdk-list') && c.length === 2, c.join() + ' ' + calls);
+  rest.fail = false;
+  await pg.evaluate(() => localStorage.setItem('_projects', JSON.stringify([{ id:'L1', partName:'端末内の案件', dims:[], meas:{} }])));
+  await load(); await pg.waitForTimeout(300);
+  const lsBefore = await pg.evaluate(() => localStorage.getItem('_projects'));
+  rest.delay = 3000; rest.docs = rest.docs.filter(d => d.id !== 'c1');   // the refresh after delete arrives late
+  await pg.click('div[style*="cursor: pointer"]:has-text("クラウド案件A") >> button:text-is("削除")'); await pg.waitForTimeout(500);
+  const lc = await pg.evaluate(() => JSON.parse(localStorage.getItem('_listCache')).map(p => p.id)); calls = await pg.evaluate(() => window.__fsStore.calls);
+  c = await cards();
+  ok('C6 削除 → クラウドから削除・一覧キャッシュからも消え、すぐ一覧から消える', calls.includes('delete:c1') && !lc.includes('c1') && !c.includes('クラウド案件A'), lc + ' / ' + c.join() + ' / ' + calls);
+  await pg.waitForTimeout(3500); rest.delay = 0;
+  const lsAfter = await pg.evaluate(() => localStorage.getItem('_projects'));
+  ok('C7 端末内データ(_projects)は一覧キャッシュで上書きされない', lsBefore === lsAfter && JSON.parse(lsAfter)[0].id === 'L1', String(lsAfter).slice(0, 60));
+  await ctx.close();
+  return R;
+}
+
 (async () => {
   const browser = await chromium.launch(); const errs = [];
   const a = await shots(browser, baseHtml, 'before', errs), b = await shots(browser, newHtml, 'after', errs);
@@ -162,6 +220,8 @@ async function drawingTests(browser, html, errs) {
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
   console.log('== 図面タブ試験（改修後）');
   for (const r of await drawingTests(browser, newHtml, errs)) console.log(r);
+  console.log('== 一覧の読込試験（同期モード・Firebaseは tools/stubs で差し替え）');
+  for (const r of await cloudListTests(browser, newHtml, errs)) console.log(r);
   console.log('== ページエラー'); console.log(errs.length ? errs.join('\n') : 'none');
   await browser.close();
 })();
