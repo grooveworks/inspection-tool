@@ -224,6 +224,57 @@ async function drawingTests(browser, html, errs) {
   return R;
 }
 
+// report: numbered-balloon drawing sheet (v2.9.0). Google login / Drive stubbed; print checked with Chromium's PDF output
+async function reportSheetTests(browser, html, errs) {
+  const pg = await open(browser, html, 1180, 820, errs, 'sheet');
+  const st = path.join(__dirname, 'stubs'), fx = path.join(__dirname, 'fixtures');
+  await pg.route(/accounts\.google\.com\/gsi\/client/, r => r.fulfill({ path:path.join(st,'gsi.js'), contentType:'application/javascript' }));
+  let drive = 0;
+  await pg.route(/googleapis\.com\/drive\/v3\/files/, r => { drive++; r.fulfill({ path:path.join(fx,'test_drawing.pdf'), contentType:'application/pdf' }); });
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
+  const L = (p, x, y) => [{ p, x, y, w:0.03, h:0.02 }];
+  const dim = (n, locs) => ({ name:'φ' + n, nominal:n, upper:0.02, lower:0, type:'穴', locs });
+  const j = { partName:'SHEETTEST', drawingNo:'RS-1', drawing:{ fileId:'FILE_RS', name:'RS-1.pdf' },
+    dims:[ dim(10, L(1,0.5,0.5)), dim(11, L(1,0.505,0.5)), dim(12, L(1,0.5,0.51)), dim(13, L(1,0.51,0.505)), dim(14, L(2,0.2,0.3)), dim(15, []) ] };
+  const imp = async v => { await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(v)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(600); };
+  await imp(j);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const pdfPages = async () => { const b = await pg.pdf({ preferCSSPageSize:true });
+    return require('child_process').spawnSync('python3', ['-c', 'import sys,io,pypdf;r=pypdf.PdfReader(io.BytesIO(sys.stdin.buffer.read()));print(" ".join("%dx%d"%(round(float(p.mediabox.width)),round(float(p.mediabox.height))) for p in r.pages))'], { input:b }).stdout.toString().trim(); };
+  await pg.click('button:has-text("測定")').catch(() => {}); await pg.click('button:has-text("成績書")'); await pg.waitForTimeout(300);
+  const s1 = await pg.evaluate(() => ({ btn: !!document.querySelector('button') && [...document.querySelectorAll('button')].some(b => b.textContent === '番号付き図面を表示'),
+    card: [...document.querySelectorAll('.no-print')].some(e => /検査箇所図/.test(e.textContent)), sheets: document.querySelectorAll('.drw-sheet').length, flow: document.querySelectorAll('.print-flow').length }));
+  const pp1 = await pdfPages();
+  ok('S1 図面未読込・未ログイン → 「番号付き図面を表示」ボタン（印刷されない）・自動で読みに行かない・印刷は従来どおり1枚', s1.btn && s1.card && s1.sheets === 0 && s1.flow === 0 && drive === 0 && pp1 === '595x842', JSON.stringify(s1) + ' drive=' + drive + ' pdf=' + pp1);
+  await pg.click('button:text-is("番号付き図面を表示")');
+  await pg.waitForFunction(() => { const i = [...document.querySelectorAll('.drw-sheet-img')]; return i.length && i.every(x => x.complete && x.naturalWidth > 0 && x.dataset.marks); }, null, { timeout:60000 }).catch(() => {});
+  const s2 = await pg.evaluate(() => ({ marks: [...document.querySelectorAll('.drw-sheet-img')].map(i => JSON.parse(i.dataset.marks || '[]')), text: [...document.querySelectorAll('.drw-sheet')].map(e => e.innerText).join(' | ') }));
+  const nums = s2.marks.map(m => m.map(x => x.n).join(','));
+  ok('S2 読込後 → 位置のあるページごとに1枚・番号は成績書のNo.・位置のない項目は注記', nums.join('/') === '1,2,3,4/5' && /（1\/2）/.test(s2.text) && /（2\/2）/.test(s2.text) && /図面に位置のない項目: No\.6/.test(s2.text) && drive === 1, nums.join('/') + ' ' + s2.text.replace(/\s+/g, ' ').slice(0, 160));
+  const m1 = s2.marks[0] || [], gap = [];
+  for (let a = 0; a < m1.length; a++) for (let b = a + 1; b < m1.length; b++){ const A = m1[a], B = m1[b];
+    gap.push(Math.hypot((A.x - B.x), (A.y - B.y) / A.ar) / A.r); }
+  const inside = s2.marks.flat().every(m => m.x - m.r > 0 && m.x + m.r < 1 && m.y - m.r * m.ar > 0 && m.y + m.r * m.ar < 1);
+  ok('S3 密集した寸法でも番号の丸が重ならない・用紙からはみ出さない', m1.length === 4 && Math.min(...gap) >= 2 && inside, 'min gap ' + Math.min(...gap).toFixed(2) + 'R inside=' + inside);
+  const pp2 = await pdfPages();
+  ok('S4 印刷 → 1枚目 成績書 A4縦・続けて図面 A3横（ページごと）', pp2 === '595x842 1191x842 1191x842', pp2);
+  await pg.click('button:text-is("測定")'); await pg.waitForTimeout(200); await pg.click('button:has-text("成績書")');
+  await pg.waitForFunction(() => document.querySelectorAll('.drw-sheet-img').length === 2, null, { timeout:20000 }).catch(() => {});
+  ok('S5 タブを戻っても再ダウンロードせずに表示', (await pg.$$('.drw-sheet-img')).length === 2 && drive === 1, 'drive=' + drive);
+  await pg.evaluate(() => { DRW.pdf = null; DRW.fileId = null; SHEET_AUTO = ''; });
+  await pg.click('button:text-is("測定")'); await pg.waitForTimeout(200); await pg.click('button:has-text("成績書")');
+  await pg.waitForFunction(() => document.querySelectorAll('.drw-sheet-img').length === 2, null, { timeout:30000 }).catch(() => {});
+  ok('S6 Googleログイン済みなら押さなくても自動で表示', (await pg.$$('.drw-sheet-img')).length === 2 && drive === 2, 'drive=' + drive);
+  await pg.click('text=←'); await pg.waitForTimeout(300);
+  await imp({ partName:'SHEETTEST2', drawingNo:'RS-2', dims:j.dims });
+  await pg.click('text=RS-2').catch(() => {}); await pg.waitForTimeout(300);
+  await pg.click('button:has-text("成績書")'); await pg.waitForTimeout(300);
+  const s7 = await pg.evaluate(() => ({ t: /検査箇所図|番号付き図面/.test(document.body.innerText), flow: document.querySelectorAll('.print-flow').length }));
+  ok('S7 図面が紐づいていない案件 → 成績書は従来どおり（図面欄なし）', !s7.t && s7.flow === 0, JSON.stringify(s7));
+  await pg.close();
+  return R;
+}
+
 // cloud mode: Firebase SDK stubbed (tools/stubs/firebase-*.js), Firestore REST answered from the same in-memory data
 const toFs = v => v === null ? { nullValue:null } : Array.isArray(v) ? { arrayValue:{ values:v.map(toFs) } }
   : typeof v === 'object' ? { mapValue:{ fields:Object.fromEntries(Object.entries(v).map(([k,x]) => [k, toFs(x)])) } }
@@ -316,6 +367,8 @@ async function cloudListTests(browser, html, errs) {
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
   console.log('== 図面タブ試験（改修後）');
   for (const r of await drawingTests(browser, newHtml, errs)) console.log(r);
+  console.log('== 成績書の番号付き図面試験（改修後）');
+  for (const r of await reportSheetTests(browser, newHtml, errs)) console.log(r);
   console.log('== 一覧の読込試験（同期モード・Firebaseは tools/stubs で差し替え）');
   for (const r of await cloudListTests(browser, newHtml, errs)) console.log(r);
   console.log('== ページエラー'); console.log(errs.length ? errs.join('\n') : 'none');
