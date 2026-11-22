@@ -154,7 +154,7 @@ async function drawingTests(browser, html, errs) {
   ok('D5 同じ図番の再取込 → 既存の寸法に位置だけ更新・案件増えない', all.length === 1 && all[0].dims[0].locs[0].x === 0.3 && all[0].dims[0].upper === 0.02 && all[0].drawing.fileId === 'FILE123');
   // drawing link inside the import JSON
   const impJ = async v => { if (await pg.$('text=←')) { await pg.click('text=←'); await pg.waitForTimeout(300); }
-    await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(v)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700); };
+    if (!(await pg.$('textarea'))) await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(v)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700); };
   const j3 = { partName:'DRAWTEST2', drawingNo:'DT-2', dims:j.dims, drawing:{ fileId:'FILE_NEW', name:'DT-2.pdf' } };
   await impJ(j3);
   let q = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).filter(p => p.drawingNo === 'DT-2'));
@@ -167,6 +167,33 @@ async function drawingTests(browser, html, errs) {
   await impJ({ drawingNo:'NOPE-9', drawing:{ fileId:'X' } });
   const m = await pg.evaluate(() => { const t = document.querySelector('textarea'); return t ? t.nextElementSibling.textContent : ''; });
   ok('D9 図面だけ（該当図番なし）→ エラー・案件増えない', /案件がありません/.test(m) && (await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).length)) === nBefore, m);
+  // revision diff (rev): attaches to the existing project only, marks rows by key, lists removed items
+  const before = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'DT-1'));
+  const rev = { from:'DT-1-00', items:[
+      { g:'dims', nominal:10, upper:0.02, lower:0, k:'nom', old:'φ11' },
+      { g:'features', name:'穴A', view:'A-A', k:'mod', t:'深さ変更' },
+      { g:'dists', nominal:5, upper:0.1, lower:0, view:'A-A', k:'tol', old:'5 0/−0.1', est:true } ],
+    gone:[ { g:'径', t:'φ9 削除' }, { g:'距離', t:'3 削除' } ], other:[ '材質変更' ] };
+  await impJ({ drawingNo:'DT-1', rev });
+  const after = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')));
+  const a1 = after.find(p => p.drawingNo === 'DT-1');
+  const strip = p => JSON.stringify({ dims:p.dims, meas:p.meas, nc:p.nc, drawing:p.drawing });
+  ok('R1 改訂データだけ取込 → 既存案件に保存・寸法/測定値/NC/図面はそのまま・案件増えない', after.length === nBefore && a1.rev && a1.rev.items.length === 3 && strip(a1) === strip(before), (a1.rev ? a1.rev.items.length : 'no rev') + ' / ' + after.length);
+  let tx = await pg.evaluate(() => document.body.innerText);
+  ok('R2 測定タブ：変わった行に「改訂：旧 φ11」・下に削除分（径）とその他の変更', /改訂：旧 φ11/.test(tx) && /旧版（DT-1-00）から削除/.test(tx) && /φ9 削除/.test(tx) && /材質変更/.test(tx) && !/3 削除/.test(tx), tx.slice(0, 0));
+  await pg.click('button:text-matches("^NC")'); await pg.waitForTimeout(300);
+  tx = await pg.evaluate(() => document.body.innerText);
+  ok('R3 NCタブ：形状・距離の行に印、下に削除分（距離）', /改訂：深さ変更/.test(tx) && /改訂：旧 5 0\/−0\.1（公差のみ）（推定）/.test(tx) && /3 削除/.test(tx) && !/φ9 削除/.test(tx));
+  await pg.click('button:text-is("図面")'); await pg.waitForTimeout(300);
+  tx = await pg.evaluate(() => document.body.innerText);
+  ok('R4 図面タブ：行に改訂の印', /改訂：旧 φ11/.test(tx) && /改訂：深さ変更/.test(tx));
+  await impJ({ drawingNo:'DT-1', nc:j.nc });   // NC replaced → marks stay (matched by key)
+  await pg.click('button:text-matches("^NC")'); await pg.waitForTimeout(300);
+  tx = await pg.evaluate(() => document.body.innerText);
+  ok('R5 NCを取込み直しても改訂の印は残る', /改訂：深さ変更/.test(tx) && /改訂：旧 5/.test(tx));
+  await impJ({ drawingNo:'NOPE-9', rev });
+  const m2 = await pg.evaluate(() => { const t = document.querySelector('textarea'); return t ? t.nextElementSibling.textContent : ''; });
+  ok('R6 改訂データだけ（該当図番なし）→ エラー・案件増えない', /案件がありません/.test(m2) && (await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).length)) === nBefore, m2);
   await pg.close();
   return R;
 }

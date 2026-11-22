@@ -21,7 +21,7 @@
    node tools/verify.js ../baseline_vX.Y.Z.html index.html ../verify_out
    ```
    - 画面差分: 頼まれた変更とバージョン表記以外に差分が出たら原因を調べる。差分のある画面は必ず画像を目で見る。
-   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D13 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。一覧の読込試験: C1〜C7 すべて OK（Firebase SDK と Firestore REST を差し替え）。
+   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D13・改訂 R1〜R6 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。一覧の読込試験: C1〜C7 すべて OK（Firebase SDK と Firestore REST を差し替え）。
    - ページエラー: none。
    - 新しい挙動を足したら、`tools/verify.js` の試験にも足す。
 6. **push**: `git push -u origin feature/<内容>`（浅いクローンなので `-c push.negotiate=true` を付ける）。
@@ -34,6 +34,12 @@
 - 起動時は前回の一覧（localStorage `_listCache`）をすぐ表示し、最新が届いたら差し替える。`_projects`（端末内データ）とは別キーで、上書きしない。
 - 一覧の取得は Firestore REST（1回のHTTPS GET）を先に使い、失敗したら SDK の `orderBy("updatedAt","desc").get()` に戻る。REST の結果は SDK と同じ形に変換（更新日時のない文書は除外）。
 - 案件を開く・保存・同期は従来どおり SDK。
+
+## 改訂差分（v2.6.0〜）
+- 案件の `rev:{from, items[], gone[], other[]}`。items は `{g:"dims"|"features"|"dists", k:"new"|"tol"|"nom"|"mod", old, t, est, …キー}`。
+  行との対応はキーで取る（dims/dists: nominal+upper+lower(+view)、features: name+view）。NCを取込み直しても印は残る。
+- 表示: 測定・NC・図面タブの該当行にオレンジの「改訂：…」、各表の下に灰色の「旧版から削除」「その他の変更」。rev がない案件の見た目は変わらない。
+- 取込: rev だけのJSONでも同じ図番の既存案件に付く（該当なしはエラー）。
 
 ## データ形式（取込JSON）
 抽出の手順と形式の正本はプロジェクトの「図面公差抽出ナレッジ.md」。アプリ側の要点だけ記す。

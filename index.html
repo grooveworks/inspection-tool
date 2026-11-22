@@ -25,7 +25,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-const VER = "v2.5.1";
+const VER = "v2.6.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false;
@@ -229,6 +229,46 @@ function locsOf(v){
 function drawingOf(v){
   if (!v || typeof v !== "object" || typeof v.fileId !== "string" || !v.fileId.trim()) return null;
   return { fileId: v.fileId.trim(), name: typeof v.name === "string" ? v.name : "" };
+}
+// revision diff vs. the previous drawing: { from, items:[{g,k,old,t,est, key…}], gone:[{g,t,est}], other:[…] }
+//   items are matched to rows by key (dims/dists: nominal+upper+lower(+view), features: name+view), so NC re-imports keep the marks
+function revOf(v){
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const s = x => x == null ? "" : String(x);
+  const num = x => { const n = typeof x === "number" ? x : parseFloat(x); return isFinite(n) ? n : null; };
+  const items = (Array.isArray(v.items) ? v.items : [])
+    .filter(i => i && ["dims","features","dists"].includes(i.g) && ["new","tol","nom","mod"].includes(i.k))
+    .map(i => ({ g:i.g, k:i.k, old:s(i.old), t:s(i.t), est:i.est === true, name:s(i.name), view:s(i.view), nominal:num(i.nominal), upper:num(i.upper), lower:num(i.lower) }));
+  const gone = (Array.isArray(v.gone) ? v.gone : []).filter(i => i && i.t).map(i => ({ g:s(i.g), t:s(i.t), est:i.est === true }));
+  const other = (Array.isArray(v.other) ? v.other : []).filter(x => x != null && x !== "").map(String);
+  if (!items.length && !gone.length && !other.length) return null;
+  return { from:s(v.from), items, gone, other };
+}
+function revFind(g, r){
+  const R = P && P.rev; if (!R || !Array.isArray(R.items)) return null;
+  const eq = (a, b) => a != null && b != null && Math.abs(a - b) < 1e-9;
+  return R.items.find(i => i.g === g && (g === "features"
+    ? i.name === (r.name || "") && i.view === (r.view || "")
+    : eq(i.nominal, r.nominal) && eq(i.upper, r.upper) && eq(i.lower, r.lower) && (g !== "dists" || !i.view || i.view === (r.view || "")))) || null;
+}
+function revText(i){
+  const base = i.k === "new" ? "新規" : i.k === "mod" ? i.t : "旧 " + i.old + (i.k === "tol" ? "（公差のみ）" : "");
+  return "改訂：" + base + (i.est ? "（推定）" : "");
+}
+const REV_COLOR = "#B45309";
+const revLine = (g, r, extra) => { const i = revFind(g, r); return i ? h("div", { style:"margin-top:2px;font-size:11px;font-weight:700;line-height:1.3;color:" + REV_COLOR + ";white-space:normal;word-break:normal;overflow-wrap:break-word;" + (extra || ""), text:revText(i) }) : null; };
+// grey box under a table: what the previous drawing had that is gone, plus other changes (title block etc.)
+function revBox(groups){
+  const R = P && P.rev; if (!R) return null;
+  const gone = (R.gone || []).filter(x => groups.includes(x.g)), other = R.other || [];
+  if (!gone.length && !other.length) return null;
+  const item = t => h("div", { style:"font-size:12px;line-height:1.5;padding-left:10px", text:"・" + t });
+  return h("div", { style:"flex-shrink:0;max-height:28vh;overflow:auto;background:#F8F9FA;border:1px solid #DADCE0;border-radius:12px;padding:8px 12px;margin-top:8px;color:#5F6368" }, [
+    gone.length ? h("div", { style:"font-size:12px;font-weight:700;margin-bottom:2px", text:"旧版" + (R.from ? "（" + R.from + "）" : "") + "から削除" }) : null,
+    ...gone.map(x => item((groups.length > 1 ? "[" + x.g + "] " : "") + x.t + (x.est ? "（推定）" : ""))),
+    other.length ? h("div", { style:"font-size:12px;font-weight:700;margin:" + (gone.length ? "6px" : "0") + " 0 2px", text:"その他の変更" + (gone.length ? "" : (R.from ? "（旧版 " + R.from + " から）" : "")) }) : null,
+    ...other.map(item)
+  ]);
 }
 function dimFromJSON(d, id){
   const type = d.type || "穴";
@@ -477,10 +517,12 @@ async function renderList(){
               const hasDims = Array.isArray(raw.dims) && raw.dims.length > 0;
               const nc = raw.nc ? ncFromJSON(raw.nc) : null;
               const drw = drawingOf(raw.drawing);
-              if (!hasDims && !nc && !drw) throw new Error("寸法データ(dims)またはNCデータ(nc)がありません");
+              const rev = raw.rev ? revOf(raw.rev) : null;
+              if (raw.rev && !rev) throw new Error("改訂データ(rev)の形式が不正です");
+              if (!hasDims && !nc && !drw && !rev) throw new Error("寸法データ(dims)またはNCデータ(nc)がありません");
               const dno = String(raw.drawingNo || "").trim();
               // same drawing number already exists -> update its NC data / drawing link only (dims / measurements untouched)
-              if ((nc || drw) && dno){
+              if ((nc || drw || rev) && dno){
                 const hit = (await Store.listProjects())
                   .filter(x => String(x.drawingNo || "").trim() === dno)
                   .sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
@@ -491,6 +533,7 @@ async function renderList(){
                     ex.nc = nc;
                   }
                   if (drw) ex.drawing = drw;
+                  if (rev) ex.rev = rev;
                   if (hasDims){
                     const used = new Set();
                     raw.dims.forEach(r => {
@@ -501,7 +544,7 @@ async function renderList(){
                   }
                   await Store.saveProject(ex);
                   IMPTEXT = ""; SHOWIMP = false;
-                  await openProject(ex.id); TAB = nc ? "nc" : "draw"; renderProject();
+                  await openProject(ex.id); TAB = nc ? "nc" : drw ? "draw" : "meas"; renderProject();
                   return;
                 }
               }
@@ -512,6 +555,7 @@ async function renderList(){
               p.dims = hasDims ? raw.dims.map((x,i) => dimFromJSON(x, i+1)) : [];
               if (nc) p.nc = nc;
               if (drw) p.drawing = drw;
+              if (rev) p.rev = rev;
               normalizeProject(p);
               await Store.saveProject(p);
               IMPTEXT = ""; SHOWIMP = false;
@@ -655,6 +699,7 @@ function renderMeas(body){
   const tbl = buildTable();
   body.appendChild(tbl);
   if (tbl.__fitHeader) tbl.__fitHeader();
+  const rb = revBox(["径"]); if (rb) body.appendChild(rb);
   body.appendChild(h("div", { style:"flex-shrink:0;display:flex;gap:8px;justify-content:flex-end;padding-top:8px;flex-wrap:wrap" }, [
     h("button", { style:"height:40px;padding:0 16px;border:1px solid #DADCE0;border-radius:12px;background:#FFF;font-size:13px;font-weight:600", text:"工具セッティングシート出力",
       onclick: () => { if (!P.dims.some(d => (d.type || "穴") === "穴")){ alert("穴の寸法がありません"); return; } downloadToolSheet(P); } }),
@@ -744,7 +789,8 @@ function buildRow(dim){
   if (dim.jobNo) tags.push("J:" + dim.jobNo);
   tr.appendChild(pinTd(2, "padding:5px 6px;overflow:hidden;line-height:1.25", [
     nameRow,
-    tags.length ? h("div", { style:"margin-top:2px;font-size:10px;color:#5F6368;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis", text:tags.join("/") }) : null
+    tags.length ? h("div", { style:"margin-top:2px;font-size:10px;color:#5F6368;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis", text:tags.join("/") }) : null,
+    revLine("dims", dim, "font-size:10.5px")
   ]));
 
   tr.appendChild(pinTd(3, "padding:4px 8px 4px 4px;text-align:right;font-size:11px;line-height:1.55;" + MONO, [
@@ -1004,11 +1050,12 @@ async function loadDrawing(fileId){
 
 function drawRows(){
   const R = [], f = v => fmtTol(v);
-  P.dims.forEach(d => R.push({ g:"測定", n:d.name, t:f(d.upper) + " / " + f(d.lower), v:"", locs:d.locs || [] }));
+  const rv = (g, x) => { const i = revFind(g, x); return i ? revText(i) : ""; };
+  P.dims.forEach(d => R.push({ g:"測定", n:d.name, t:f(d.upper) + " / " + f(d.lower), v:"", locs:d.locs || [], rv:rv("dims", d) }));
   const nc = ncOf(P);
   if (nc){
-    nc.features.forEach(x => R.push({ g:"NC 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [] }));
-    nc.dists.forEach(x => R.push({ g:"NC 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [] }));
+    nc.features.forEach(x => R.push({ g:"NC 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [], rv:rv("features", x) }));
+    nc.dists.forEach(x => R.push({ g:"NC 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [], rv:rv("dists", x) }));
   }
   return R;
 }
@@ -1047,13 +1094,14 @@ function renderDrawing(body){
   rows.forEach((r, i) => {
     if (r.g !== last){ last = r.g; list.appendChild(h("div", { style:"font-size:12px;color:#5F6368;padding:8px 12px 4px;background:#F8F9FA;border-bottom:1px solid #E8EAED;position:sticky;top:0", text:r.g })); }
     const on = DRW.sel === i, has = r.locs.length > 0;
-    const el = h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
+    const el = h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (r.rv ? "flex-wrap:wrap;" : "") + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
       onclick: () => { if (!has) return;
         if (DRW.sel != null && rowEls[DRW.sel]) rowEls[DRW.sel].style.background = "";
         DRW.sel = i; el.style.background = "#E1F0FF"; show(); } }, [
       h("span", { style:"font-weight:700;font-size:14px;white-space:nowrap", text:r.n }),
       h("span", { style:"font-size:12px;color:#0062CC;white-space:nowrap;" + MONO, text:r.t }),
-      h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? r.v : "位置なし" })
+      h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? r.v : "位置なし" }),
+      r.rv ? h("div", { style:"flex-basis:100%;font-size:11px;font-weight:700;line-height:1.3;color:" + REV_COLOR, text:r.rv }) : null
     ]);
     rowEls[i] = el; list.appendChild(el);
   });
@@ -1166,7 +1214,7 @@ function renderNC(body){
         h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
         h("tbody", null, nc.features.map(f => h("tr", null, [
           chkCell(f),
-          h("td", { style:TD }, [ h("div", { style:"font-weight:700;white-space:nowrap", text:f.name || "—" }), f.view ? h("div", { style:"font-size:12px;color:#5F6368;white-space:nowrap", text:f.view }) : null ]),
+          h("td", { style:TD }, [ h("div", { style:"font-weight:700;white-space:nowrap", text:f.name || "—" }), f.view ? h("div", { style:"font-size:12px;color:#5F6368;white-space:nowrap", text:f.view }) : null, revLine("features", f, "min-width:200px;max-width:300px") ]),
           h("td", { style:TD + ";text-align:center;font-weight:700;" + MONO, text:String(f.qty) }),
           h("td", { style:TD }, [ lines(f.dia, true) ]),
           h("td", { style:TD }, [ lines(f.depth, true) ]),
@@ -1186,7 +1234,7 @@ function renderNC(body){
         h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
         h("tbody", null, nc.dists.map(d => h("tr", null, [
           chkCell(d),
-          h("td", { style:TD + ";font-weight:700;" + MONO, text:String(d.nominal) }),
+          h("td", { style:TD }, [ h("div", { style:"font-weight:700;" + MONO, text:String(d.nominal) }), revLine("dists", d, "max-width:300px") ]),
           h("td", { style:TD + ";white-space:nowrap;color:#0062CC;" + MONO, text:fmtTol(d.upper) + " / " + fmtTol(d.lower) }),
           h("td", { style:TD + ";white-space:nowrap;" + MONO, text:uLim(d) + " / " + lLim(d) }),
           h("td", { style:TD + ";text-align:center;" + MONO, text:String(d.qty) }),
@@ -1195,6 +1243,7 @@ function renderNC(body){
         ])))
       ])));
   }
+  const rb = revBox(["穴・形状", "距離"]); if (rb) inner.appendChild(rb);
 }
 
 function renderReport(body){
