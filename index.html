@@ -24,11 +24,12 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <div id="app"></div>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.6.0";
+const VER = "v2.7.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
-let db = null, useFB = false, inited = false;
+let db = null, useFB = false, inited = false, auth = null;
 function initFB(){
   if (inited) return useFB;
   inited = true;
@@ -36,11 +37,46 @@ function initFB(){
     if (window.firebase && window.firebase.firestore) {
       if (!firebase.apps.length) firebase.initializeApp(FB);
       db = firebase.firestore(); useFB = true;
+      if (firebase.auth) auth = firebase.auth();   // writes need login (Firestore rules: write/delete only for info-manager@groove-works.jp)
     }
   } catch(e){ console.warn('firebase unavailable', e); }
   return useFB;
 }
 function isCloud(){ return useFB; }
+
+/* ── login (cloud mode only): once per device, kept by Firebase Auth ── */
+const okUser = u => !!u && String(u.email || "").toLowerCase() === "info-manager@groove-works.jp";
+function authReady(){ return new Promise(ok => { const off = auth.onAuthStateChanged(u => { off(); ok(u); }); }); }
+async function fbSignIn(){
+  const tok = await gToken();
+  const r = await auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(null, tok));
+  if (!okUser(r.user)){ const em = r.user && r.user.email; await auth.signOut(); throw new Error((em || "このアカウント") + " ではログインできません（info-manager@groove-works.jp のみ）"); }
+}
+function renderLogin(msg){
+  const root = app(); root.innerHTML = "";
+  const err = h("div", { style:"min-height:20px;margin-top:12px;font-size:13px;color:#B3261E;word-break:break-all", text: msg || "" });
+  const btn = h("button", { style:"margin-top:24px;height:48px;padding:0 28px;border:none;border-radius:12px;background:#007AFF;color:#FFF;font-size:16px;font-weight:700", text:"Googleでログイン",
+    onclick: async () => { btn.disabled = true; err.textContent = "";
+      try { await fbSignIn(); renderList(); } catch (e){ btn.disabled = false; err.textContent = e.message; } } });
+  root.appendChild(h("div", { style:"min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px" }, [
+    h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:36px 40px;max-width:420px;width:100%;text-align:center" }, [
+      h("div", { style:"font-size:22px;font-weight:700", text:"寸法検査ツール" }),
+      h("div", { style:"margin-top:18px;font-size:15px;line-height:1.7;color:#3C4043", text:"この端末で保存するには" }),
+      h("div", { style:"font-size:15px;line-height:1.7;color:#3C4043", text:"ログインが必要です（初回のみ）" }),
+      btn,
+      h("div", { style:"margin-top:8px;font-size:12px;color:#5F6368", text:"info-manager@groove-works.jp" }),
+      err,
+      h("div", { style:"margin-top:16px;font-size:11px;color:#9AA0A6;" + MONO, text:VER })
+    ])
+  ]));
+}
+let saveErrShown = false;
+function saveFailed(e){
+  if (saveErrShown || !e || !/permission|PERMISSION/.test(String(e.code || e.message))) return;
+  saveErrShown = true;
+  document.body.appendChild(h("div", { style:"position:fixed;left:12px;right:12px;bottom:12px;z-index:50;background:#B3261E;color:#FFF;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:700",
+    text:"保存できませんでした（ログインが切れています）。再読み込みしてログインしてください。" }));
+}
 
 const LS = "_projects";
 const lsList = () => { try { return JSON.parse(localStorage.getItem(LS) || "[]"); } catch(e){ return []; } };
@@ -88,7 +124,7 @@ const Store = {
   cachedList(){ return useFB ? lcList() : lsList(); },
   async saveProject(p){
     p.updatedAt = Date.now();
-    if (useFB) { try { await db.collection("projects").doc(p.id).set(JSON.parse(JSON.stringify(p))); } catch(e){ console.error(e); } }
+    if (useFB) { try { await db.collection("projects").doc(p.id).set(JSON.parse(JSON.stringify(p))); } catch(e){ console.error(e); saveFailed(e); } }
     const list = lsList(); const i = list.findIndex(x=>x.id===p.id);
     if (i>=0) list[i]=p; else list.unshift(p);
     lsWrite(list);
@@ -990,7 +1026,7 @@ const GCFG = {
   clientId: "651216188590-o5fj6sjrionnc30p9948cp3cdu1mf326.apps.googleusercontent.com",
   apiKey: "AIzaSyB8nZawGcMMx0kSaVw9wv57Ef75EP_CBtA",
   appId: "651216188590",
-  scope: "https://www.googleapis.com/auth/drive.readonly",
+  scope: "openid email https://www.googleapis.com/auth/drive.readonly",   // email: same token also signs in to Firebase
   account: "info-manager@groove-works.jp", domain: "groove-works.jp"   // drawings live in this account's Drive
 };
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
@@ -1311,7 +1347,13 @@ function renderReport(body){
 }
 
 initFB();
-renderList();
+(async () => {
+  if (useFB){
+    if (!auth) return renderLogin("ログイン部品を読み込めませんでした。再読み込みしてください。");
+    if (!okUser(await authReady())) return renderLogin("");
+  }
+  renderList();
+})();
 
 </script>
 </body>

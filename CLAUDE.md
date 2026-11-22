@@ -21,7 +21,7 @@
    node tools/verify.js ../baseline_vX.Y.Z.html index.html ../verify_out
    ```
    - 画面差分: 頼まれた変更とバージョン表記以外に差分が出たら原因を調べる。差分のある画面は必ず画像を目で見る。
-   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D13・改訂 R1〜R6 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。一覧の読込試験: C1〜C7 すべて OK（Firebase SDK と Firestore REST を差し替え）。
+   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D13・改訂 R1〜R6 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。一覧の読込試験: C1〜C7・ログイン L1〜L4 すべて OK（Firebase SDK・Auth と Firestore REST を差し替え。この試験は http://127.0.0.1 で配信して行う。file:// だと localStorage が次のページに届かず不安定になる）。
    - ページエラー: none。
    - 新しい挙動を足したら、`tools/verify.js` の試験にも足す。
 6. **push**: `git push -u origin feature/<内容>`（浅いクローンなので `-c push.negotiate=true` を付ける）。
@@ -40,6 +40,12 @@
   行との対応はキーで取る（dims/dists: nominal+upper+lower(+view)、features: name+view）。NCを取込み直しても印は残る。
 - 表示: 測定・NC・図面タブの該当行にオレンジの「改訂：…」、各表の下に灰色の「旧版から削除」「その他の変更」。rev がない案件の見た目は変わらない。
 - 取込: rev だけのJSONでも同じ図番の既存案件に付く（該当なしはエラー）。
+
+## ログイン（v2.7.0〜、A1：書き込み・削除はログイン必須）
+- 同期モードでは、端末で初回だけログイン画面を出す（Firebase Auth が端末に保持）。ログインは GIS のトークン（scope: openid email drive.readonly）を `signInWithCredential` に渡すので、図面用ログインと1回で済む。info-manager@groove-works.jp 以外は拒否してログアウト。
+- Firebase 側: Authentication の Google を有効化、外部プロジェクトのクライアントID（inspection-tool-515411 のOAuthクライアント）をセーフリスト登録、承認済みドメインに grooveworks.github.io。
+- Firestore ルール（projects）: 読み取りは誰でも可／作成・削除は本人のみ／更新は本人のみ、ただし `drawing` と `rev` だけの更新はログインなしでも可（Claude が REST で図面の紐づけ・改訂差分を書くため）。
+- 保存が権限エラーになったら画面下に赤帯「保存できませんでした（ログインが切れています）」。
 
 ## データ形式（取込JSON）
 抽出の手順と形式の正本はプロジェクトの「図面公差抽出ナレッジ.md」。アプリ側の要点だけ記す。

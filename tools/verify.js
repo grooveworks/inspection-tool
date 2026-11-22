@@ -204,6 +204,11 @@ const toFs = v => v === null ? { nullValue:null } : Array.isArray(v) ? { arrayVa
   : typeof v === 'number' ? (Number.isInteger(v) ? { integerValue:String(v) } : { doubleValue:v })
   : typeof v === 'boolean' ? { booleanValue:v } : { stringValue:String(v) };
 async function cloudListTests(browser, html, errs) {
+  // served over http://127.0.0.1 (a normal origin) — with file:// the localStorage written by one page was sometimes not yet visible after the next navigation
+  const http = require('http');
+  const srv = http.createServer((q, r) => { r.writeHead(200, { 'content-type':'text/html; charset=utf-8', 'cache-control':'no-store' }); r.end(fs.readFileSync(path.resolve(html))); });
+  await new Promise(ok => srv.listen(0, '127.0.0.1', ok));
+  const URL0 = 'http://127.0.0.1:' + srv.address().port + '/index.html';
   const st = path.join(__dirname, 'stubs');
   const cloud = [
     { ...seed, id:'c1', partName:'クラウド案件A', updatedAt:2000 },
@@ -215,15 +220,17 @@ async function cloudListTests(browser, html, errs) {
   let rest = { docs: cloud, delay: 0, fail: false }, restCalls = 0;
   await pg.route(/firebase-app-compat\.js/, r => r.fulfill({ path:path.join(st,'firebase-app.js'), contentType:'application/javascript' }));
   await pg.route(/firebase-firestore-compat\.js/, r => r.fulfill({ path:path.join(st,'firebase-firestore.js'), contentType:'application/javascript' }));
+  await pg.route(/firebase-auth-compat\.js/, r => r.fulfill({ path:path.join(st,'firebase-auth.js'), contentType:'application/javascript' }));
+  await pg.route(/accounts\.google\.com\/gsi\/client/, r => r.fulfill({ path:path.join(st,'gsi.js'), contentType:'application/javascript' }));
   await pg.route(/firestore\.googleapis\.com\/v1\//, async r => { restCalls++;
     if (rest.delay) await new Promise(ok => setTimeout(ok, rest.delay));
     if (rest.fail) return r.fulfill({ status:500, body:'{}' });
     r.fulfill({ status:200, contentType:'application/json', headers:{ 'access-control-allow-origin':'*' },
       body: JSON.stringify({ documents: rest.docs.map(d => ({ name:'projects/databases/(default)/documents/projects/' + d.id, ...toFs(d).mapValue })) }) }); });
-  await pg.addInitScript(c => { window.__fsSeed = c; }, cloud);
+  await pg.addInitScript(c => { window.__fsSeed = c; if (!localStorage.getItem('__loginTest')) localStorage.setItem('__stubAuth', JSON.stringify({ email:'info-manager@groove-works.jp' })); }, cloud);
   const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
   const cards = () => pg.$$eval('div[style*="cursor: pointer"] div[style*="font-size: 17px"]', e => e.map(x => x.textContent));
-  const load = async () => { const t = Date.now(); await pg.goto('file://' + path.resolve(html)); await pg.waitForSelector('text=クラウド案件', { timeout:15000 }); return Date.now() - t; };
+  const load = async () => { const t = Date.now(); await pg.goto(URL0); await pg.waitForSelector('text=クラウド案件', { timeout:15000 }); return Date.now() - t; };
 
   await load(); await pg.waitForTimeout(300);
   let c = await cards(), calls = await pg.evaluate(() => window.__fsStore.calls);
@@ -237,11 +244,11 @@ async function cloudListTests(browser, html, errs) {
   ok('C3 2回目の起動 → 前回の一覧がすぐ出る（REST 3秒遅延でも）', tShow < 1500 && c.join() === 'クラウド案件B,クラウド案件A', tShow + 'ms ' + c.join());
   await pg.waitForSelector('text=クラウド案件C(他端末で追加)', { timeout:8000 }).catch(() => {}); c = await cards();
   ok('C4 最新が届いたら一覧が差し替わる', c[0] === 'クラウド案件C(他端末で追加)' && c.length === 3, c.join());
-  rest.delay = 0; rest.fail = true; await pg.evaluate(() => localStorage.removeItem('_listCache'));
+  rest.delay = 0; rest.fail = true; await pg.evaluate(() => localStorage.removeItem('_listCache')); await pg.waitForTimeout(400);   // let the write reach the next page
   await load(); await pg.waitForTimeout(300); c = await cards(); calls = await pg.evaluate(() => window.__fsStore.calls);
   ok('C5 REST が失敗 → SDK で一覧表示（従来の読み方）', calls.includes('sdk-list') && c.length === 2, c.join() + ' ' + calls);
   rest.fail = false;
-  await pg.evaluate(() => localStorage.setItem('_projects', JSON.stringify([{ id:'L1', partName:'端末内の案件', dims:[], meas:{} }])));
+  await pg.evaluate(() => localStorage.setItem('_projects', JSON.stringify([{ id:'L1', partName:'端末内の案件', dims:[], meas:{} }]))); await pg.waitForTimeout(400);
   await load(); await pg.waitForTimeout(300);
   const lsBefore = await pg.evaluate(() => localStorage.getItem('_projects'));
   rest.delay = 3000; rest.docs = rest.docs.filter(d => d.id !== 'c1');   // the refresh after delete arrives late
@@ -252,7 +259,25 @@ async function cloudListTests(browser, html, errs) {
   await pg.waitForTimeout(3500); rest.delay = 0;
   const lsAfter = await pg.evaluate(() => localStorage.getItem('_projects'));
   ok('C7 端末内データ(_projects)は一覧キャッシュで上書きされない', lsBefore === lsAfter && JSON.parse(lsAfter)[0].id === 'L1', String(lsAfter).slice(0, 60));
-  await ctx.close();
+  // login (A1): once per device
+  await pg.evaluate(() => { localStorage.setItem('__loginTest', '1'); localStorage.removeItem('__stubAuth'); }); await pg.waitForTimeout(400);
+  await pg.goto(URL0); await pg.waitForTimeout(500);
+  let tx = await pg.evaluate(() => document.body.innerText);
+  ok('L1 未ログインの端末 → ログイン画面だけ出る（一覧は出ない）', /ログインが必要です/.test(tx) && !/クラウド案件/.test(tx));
+  await pg.evaluate(() => { window.__stubLoginEmail = 'someone@gmail.com'; });
+  await pg.click('button:text-is("Googleでログイン")'); await pg.waitForTimeout(500);
+  tx = await pg.evaluate(() => document.body.innerText);
+  const stillOut = await pg.evaluate(() => localStorage.getItem('__stubAuth'));
+  ok('L2 別アカウントでログイン → 拒否・ログアウトしてログイン画面のまま', /info-manager@groove-works\.jp のみ/.test(tx) && !/クラウド案件/.test(tx) && stillOut === null, tx.split('\n').filter(l => /のみ/.test(l)).join());
+  await pg.evaluate(() => { window.__stubLoginEmail = ''; });
+  await pg.click('button:text-is("Googleでログイン")'); await pg.waitForSelector('text=クラウド案件', { timeout:5000 }).catch(() => {});
+  const cred = await pg.evaluate(() => window.__credToken);
+  tx = await pg.evaluate(() => document.body.innerText);
+  ok('L3 info-manager でログイン → 一覧が出る（図面用と同じGoogleトークンを使用）', /クラウド案件/.test(tx) && cred === 'TESTTOKEN', 'cred=' + cred);
+  await pg.goto(URL0); await pg.waitForTimeout(500);
+  tx = await pg.evaluate(() => document.body.innerText);
+  ok('L4 2回目以降の起動 → ログイン画面は出ない', !/ログインが必要です/.test(tx) && /クラウド案件/.test(tx));
+  await ctx.close(); srv.close();
   return R;
 }
 
