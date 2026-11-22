@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.7.0";
+const VER = "v2.8.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -1030,6 +1030,7 @@ const GCFG = {
   account: "info-manager@groove-works.jp", domain: "groove-works.jp"   // drawings live in this account's Drive
 };
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+const DRW_MIN = 0.3, DRW_MAX = 12;   // drawing zoom limits
 const DRW = { pdf:null, fileId:null, page:0, scale:0, sel:null, token:null, tokenExp:0, msg:"", cv:null, tok:0 };   // cv = last rendered page (canvas cache)
 
 function loadScript(src){
@@ -1100,7 +1101,7 @@ function renderDrawing(body){
   const wrap = h("div", { style:"flex:1;min-height:0;display:flex;" + (innerWidth < 900 ? "flex-direction:column" : "") });
   body.appendChild(wrap);
   const list = h("div", { style:"flex-shrink:0;overflow-y:auto;background:#FFF;" + (innerWidth < 900 ? "height:38%;border-bottom:1px solid #DADCE0" : "width:340px;border-right:1px solid #DADCE0") });
-  const view = h("div", { style:"flex:1;min-height:0;position:relative;overflow:auto;background:#5F6368" });
+  const view = h("div", { style:"flex:1;min-height:0;position:relative;overflow:auto;background:#5F6368;touch-action:pan-x pan-y" });   // pinch is handled below, not by the browser
   const page = h("div", { style:"position:relative;margin:0 auto;background:#FFF" });
   view.appendChild(page);
   wrap.appendChild(list); wrap.appendChild(view);
@@ -1156,8 +1157,58 @@ function renderDrawing(body){
   body.style.position = "relative";
   show();
 
+  // sharp layer: when zoomed in so far that the whole-page image had to be drawn at lower resolution (browser canvas size limit),
+  // redraw just the visible area at full resolution after each zoom / scroll
+  let detT = 0, detTask = null, detCanvas = null;
+  function dropDetail(){ clearTimeout(detT); if (detTask){ try { detTask.cancel(); } catch(e){} detTask = null; } if (detCanvas){ detCanvas.width = detCanvas.height = 0; detCanvas.remove(); detCanvas = null; } }
+  function detailSoon(ms){ clearTimeout(detT); detT = setTimeout(renderDetail, ms); }
+  async function renderDetail(){
+    const cv = DRW.cv; if (!cv || !cv.pg || cv.dpr >= cv.want - 0.01 || !page.isConnected) return;
+    const x0 = Math.max(0, Math.floor(view.scrollLeft - page.offsetLeft)), y0 = Math.max(0, Math.floor(view.scrollTop - page.offsetTop));
+    const w = Math.min(Math.ceil(view.clientWidth), Math.ceil(cv.w) - x0), hh = Math.min(Math.ceil(view.clientHeight), Math.ceil(cv.h) - y0);
+    if (w <= 0 || hh <= 0) return;
+    const d = cv.want, c = h("canvas", { style:"position:absolute;left:" + x0 + "px;top:" + y0 + "px;width:" + w + "px;height:" + hh + "px;pointer-events:none" });
+    c.width = Math.round(w * d); c.height = Math.round(hh * d);
+    if (detTask){ try { detTask.cancel(); } catch(e){} }
+    const task = detTask = cv.pg.render({ canvasContext:c.getContext("2d"), viewport:cv.pg.getViewport({ scale:cv.scale }), transform:[d, 0, 0, d, -x0 * d, -y0 * d] });
+    try { await task.promise; } catch(e){ c.width = c.height = 0; return; }   // cancelled by a newer scroll / zoom
+    if (task !== detTask || DRW.cv !== cv || !page.isConnected){ c.width = c.height = 0; return; }
+    detTask = null;
+    if (detCanvas){ detCanvas.width = detCanvas.height = 0; detCanvas.remove(); }
+    detCanvas = c; cv.canvas.after(c);   // above the page image, below the red boxes
+  }
+  view.addEventListener("scroll", () => { if (DRW.cv && DRW.cv.dpr < DRW.cv.want - 0.01) detailSoon(250); }, { passive:true });
+
+  // two-finger pinch: preview with a CSS transform while moving, redraw at the new scale on release, keep the point under the fingers in place
+  let pin = null;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const mid = t => { const r = view.getBoundingClientRect(); return { x:(t[0].clientX + t[1].clientX) / 2 - r.left, y:(t[0].clientY + t[1].clientY) / 2 - r.top }; };
+  view.addEventListener("touchstart", e => {
+    if (e.touches.length !== 2 || !DRW.cv || !DRW.scale) return;
+    const m = mid(e.touches), px = view.scrollLeft + m.x - page.offsetLeft, py = view.scrollTop + m.y - page.offsetTop;
+    pin = { d0:dist(e.touches), f:1, m, fx:px / DRW.cv.w, fy:py / DRW.cv.h, s0:DRW.scale };
+    dropDetail();
+    page.style.transformOrigin = px + "px " + py + "px";
+    e.preventDefault();
+  }, { passive:false });
+  view.addEventListener("touchmove", e => {
+    if (!pin || e.touches.length !== 2) return;
+    pin.f = Math.min(DRW_MAX / pin.s0, Math.max(DRW_MIN / pin.s0, dist(e.touches) / pin.d0));
+    page.style.transform = "scale(" + pin.f + ")";
+    e.preventDefault();
+  }, { passive:false });
+  const pinchEnd = e => {
+    if (!pin || e.touches.length >= 2) return;
+    const p0 = pin; pin = null;
+    if (Math.abs(p0.f - 1) < 0.02){ page.style.transform = ""; return; }
+    DRW.scale = p0.s0 * p0.f;
+    show({ fx:p0.fx, fy:p0.fy, mx:p0.m.x, my:p0.m.y });
+  };
+  view.addEventListener("touchend", pinchEnd);
+  view.addEventListener("touchcancel", pinchEnd);
+
   // draw the page only when page / zoom / file changed (cached in DRW.cv); otherwise just move the boxes
-  function show(){
+  function show(focus){
     const sel = DRW.sel != null ? rows[DRW.sel] : null, locs = sel ? sel.locs : [];
     const pno = locs.length ? Math.min(locs[0].p, DRW.pdf.numPages) : (DRW.page || 1);
     pageLbl.textContent = pno + " / " + DRW.pdf.numPages + " ページ";
@@ -1169,21 +1220,24 @@ function renderDrawing(body){
         const base = pg.getViewport({ scale:1 });
         if (!DRW.scale) DRW.scale = Math.max(0.5, (view.clientWidth || 800) / base.width * 2.2);
         const vp = pg.getViewport({ scale:DRW.scale });
-        const dpr = Math.min(2, devicePixelRatio || 1);
+        const dpr = Math.min(2, devicePixelRatio || 1, Math.sqrt(16e6 / (vp.width * vp.height)));   // stay under the tablet browser's canvas size limit when zoomed in
         const c = h("canvas", { style:"display:block;width:" + vp.width + "px;height:" + vp.height + "px" });
         c.width = vp.width * dpr; c.height = vp.height * dpr;
         await pg.render({ canvasContext:c.getContext("2d"), viewport:vp, transform: dpr !== 1 ? [dpr,0,0,dpr,0,0] : null }).promise;
         if (token !== DRW.tok){ c.width = c.height = 0; return; }          // a newer tap/zoom took over
         if (DRW.cv && DRW.cv.canvas !== c) DRW.cv.canvas.width = DRW.cv.canvas.height = 0;   // free the old bitmap
-        cv = DRW.cv = { pdf:DRW.pdf, page:pno, scale:DRW.scale, canvas:c, w:vp.width, h:vp.height };
+        cv = DRW.cv = { pdf:DRW.pdf, page:pno, scale:DRW.scale, canvas:c, w:vp.width, h:vp.height, pg, dpr, want:Math.min(2, devicePixelRatio || 1) };
       }
       if (token !== DRW.tok) return;
       DRW.page = pno;
-      page.innerHTML = ""; page.style.width = cv.w + "px"; page.appendChild(cv.canvas);
+      page.innerHTML = ""; page.style.transform = ""; page.style.width = cv.w + "px"; page.appendChild(cv.canvas);
+      dropDetail();
       const pad = 6;
       locs.filter(b => b.p === pno).forEach((b, k) => page.appendChild(h("div", { class: k === 0 ? "drw-hl drw-main" : "drw-hl",
         style:"left:" + (b.x * cv.w - pad) + "px;top:" + (b.y * cv.h - pad) + "px;width:" + (b.w * cv.w + pad * 2) + "px;height:" + (b.h * cv.h + pad * 2) + "px" })));
-      if (locs.length){ const b = locs[0]; view.scrollTo((b.x + b.w / 2) * cv.w - view.clientWidth / 2, (b.y + b.h / 2) * cv.h - view.clientHeight / 2); }
+      if (focus) view.scrollTo(focus.fx * cv.w + page.offsetLeft - focus.mx, focus.fy * cv.h + page.offsetTop - focus.my);
+      else if (locs.length){ const b = locs[0]; view.scrollTo((b.x + b.w / 2) * cv.w - view.clientWidth / 2, (b.y + b.h / 2) * cv.h - view.clientHeight / 2); }
+      detailSoon(0);
     })().catch(e => { DRW.msg = "表示に失敗しました: " + e.message; status.textContent = DRW.msg; });
   }
 }

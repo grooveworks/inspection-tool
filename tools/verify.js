@@ -146,6 +146,32 @@ async function drawingTests(browser, html, errs) {
   const freed = await pg.evaluate(() => DRW.cv === null);
   await pg.click('button:text-is("図面")'); await pg.waitForSelector('.drw-hl', { timeout:10000 }).catch(() => {});
   ok('D13 他のタブへ移ると図面のメモリを解放・戻ると再表示', freed && (await pg.$$('.drw-hl')).length === 1 && (await pg.$$('canvas')).length === 1, 'freed=' + freed);
+  // two-finger pinch (touch events via CDP)
+  const cdp = await pg.context().newCDPSession(pg);
+  const pinch = async (from, to) => {
+    const r = await pg.evaluate(() => { const v = document.querySelector('.drw-hl').parentElement.parentElement.getBoundingClientRect(); return { x:v.left + v.width / 2, y:v.top + v.height / 2 }; });
+    const pts = d => [{ x:r.x - d, y:r.y, id:1 }, { x:r.x + d, y:r.y, id:2 }];
+    await cdp.send('Input.dispatchTouchEvent', { type:'touchStart', touchPoints:pts(from) });
+    for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchTouchEvent', { type:'touchMove', touchPoints:pts(from + (to - from) * k / 6) });
+    await cdp.send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] });
+    return r;
+  };
+  const st0 = await pg.evaluate(() => { const v = document.querySelector('.drw-hl').parentElement.parentElement, p = v.firstChild, r = v.getBoundingClientRect();
+    return { s:DRW.scale, w:DRW.cv.w, fx:(v.scrollLeft + r.width / 2 - p.offsetLeft) / DRW.cv.w, fy:(v.scrollTop + r.height / 2 - p.offsetTop) / DRW.cv.h }; });
+  await pinch(50, 100); await pg.waitForFunction(s0 => DRW.cv && Math.abs(DRW.cv.scale - s0 * 2) < s0 * 0.05, st0.s, { timeout:10000 }).catch(() => {});
+  await pg.waitForTimeout(300);
+  const st1 = await pg.evaluate(() => { const v = document.querySelector('.drw-hl').parentElement.parentElement, p = v.firstChild, r = v.getBoundingClientRect();
+    return { s:DRW.scale, w:DRW.cv.w, fx:(v.scrollLeft + r.width / 2 - p.offsetLeft) / DRW.cv.w, fy:(v.scrollTop + r.height / 2 - p.offsetTop) / DRW.cv.h, tf:p.style.transform, boxes:document.querySelectorAll('.drw-hl').length }; });
+  ok('D14 2本指で広げる → 約2倍で描き直し・指の間の場所がずれない・赤枠そのまま', Math.abs(st1.s / st0.s - 2) < 0.1 && Math.abs(st1.w / st0.w - 2) < 0.1 && Math.abs(st1.fx - st0.fx) < 0.03 && Math.abs(st1.fy - st0.fy) < 0.03 && st1.tf === '' && st1.boxes === 1, JSON.stringify({ s0:+st0.s.toFixed(3), s1:+st1.s.toFixed(3), fx:[+st0.fx.toFixed(3), +st1.fx.toFixed(3)], fy:[+st0.fy.toFixed(3), +st1.fy.toFixed(3)] }));
+  await pinch(100, 50); await pg.waitForFunction(s0 => DRW.cv && Math.abs(DRW.cv.scale - s0) < s0 * 0.05, st0.s, { timeout:10000 }).catch(() => {});
+  const st2 = await pg.evaluate(() => DRW.scale);
+  ok('D15 2本指で縮める → 元の倍率に戻る', Math.abs(st2 / st0.s - 1) < 0.06, st2.toFixed(3) + ' vs ' + st0.s.toFixed(3));
+  for (let k = 0; k < 4; k++){ await pg.click('button:text-is("＋")'); await pg.waitForTimeout(700); }
+  await pg.waitForFunction(() => document.querySelectorAll('canvas').length === 2, null, { timeout:15000 }).catch(() => {});
+  const dz = await pg.evaluate(() => { const cs = [...document.querySelectorAll('canvas')], v = cs[0].parentElement.parentElement;
+    return { n:cs.length, scale:+DRW.scale.toFixed(2), baseMP:+(cs[0].width * cs[0].height / 1e6).toFixed(1), detail: cs[1] ? [cs[1].width, cs[1].height] : null, view:[v.clientWidth, v.clientHeight], dpr:DRW.cv.dpr.toFixed(2), want:DRW.cv.want,
+      boxAbove: (() => { const b = document.querySelector('.drw-hl'); return !!b && cs[1] && !!(cs[1].compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); })() }; });
+  ok('D16 大きく拡大（全体画像が上限で粗くなる倍率）→ 見えている範囲だけ高精細で描き直す・赤枠はその上', dz.n === 2 && dz.baseMP <= 16.1 && dz.detail && dz.detail[0] >= dz.view[0] * dz.want - 2 && dz.boxAbove, JSON.stringify(dz));
   // existing drawing number: locs attach to existing dims without touching values
   const j2 = JSON.parse(JSON.stringify(j)); j2.dims[0].locs = [{p:1,x:0.3,y:0.3,w:0.02,h:0.02}];
   await pg.click('text=←'); await pg.waitForTimeout(300);
