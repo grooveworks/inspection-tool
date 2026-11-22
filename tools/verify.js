@@ -245,7 +245,7 @@ async function reportSheetTests(browser, html, errs) {
   const s1 = await pg.evaluate(() => ({ btn: !!document.querySelector('button') && [...document.querySelectorAll('button')].some(b => b.textContent === '番号付き図面を表示'),
     card: [...document.querySelectorAll('.no-print')].some(e => /検査箇所図/.test(e.textContent)), sheets: document.querySelectorAll('.drw-sheet').length, flow: document.querySelectorAll('.print-flow').length }));
   const pp1 = await pdfPages();
-  ok('S1 図面未読込・未ログイン → 「番号付き図面を表示」ボタン（印刷されない）・自動で読みに行かない・印刷は従来どおり1枚', s1.btn && s1.card && s1.sheets === 0 && s1.flow === 0 && drive === 0 && pp1 === '595x842', JSON.stringify(s1) + ' drive=' + drive + ' pdf=' + pp1);
+  ok('S1 図面未読込・未ログイン → 「番号付き図面を表示」ボタン（印刷されない）・自動で読みに行かない・印刷は成績書1枚だけ', s1.btn && s1.card && s1.sheets === 0 && drive === 0 && pp1 === '595x842', JSON.stringify(s1) + ' drive=' + drive + ' pdf=' + pp1);
   await pg.click('button:text-is("番号付き図面を表示")');
   await pg.waitForFunction(() => { const i = [...document.querySelectorAll('.drw-sheet-img')]; return i.length && i.every(x => x.complete && x.naturalWidth > 0 && x.dataset.marks); }, null, { timeout:60000 }).catch(() => {});
   const s2 = await pg.evaluate(() => ({ marks: [...document.querySelectorAll('.drw-sheet-img')].map(i => JSON.parse(i.dataset.marks || '[]')), text: [...document.querySelectorAll('.drw-sheet')].map(e => e.innerText).join(' | ') }));
@@ -269,8 +269,17 @@ async function reportSheetTests(browser, html, errs) {
   await imp({ partName:'SHEETTEST2', drawingNo:'RS-2', dims:j.dims });
   await pg.click('text=RS-2').catch(() => {}); await pg.waitForTimeout(300);
   await pg.click('button:has-text("成績書")'); await pg.waitForTimeout(300);
-  const s7 = await pg.evaluate(() => ({ t: /検査箇所図|番号付き図面/.test(document.body.innerText), flow: document.querySelectorAll('.print-flow').length }));
-  ok('S7 図面が紐づいていない案件 → 成績書は従来どおり（図面欄なし）', !s7.t && s7.flow === 0, JSON.stringify(s7));
+  const s7 = await pg.evaluate(() => ({ t: /検査箇所図|番号付き図面/.test(document.body.innerText) }));
+  ok('S7 図面が紐づいていない案件 → 成績書は従来どおり（図面欄なし）', !s7.t && (await pdfPages()) === '595x842', JSON.stringify(s7));
+  // long report: every row must be printed (v2.9.1; before, printing stopped at the screen height)
+  await pg.click('text=←'); await pg.waitForTimeout(300);
+  await imp({ partName:'LONGTEST', drawingNo:'RS-3', dims:Array.from({ length:45 }, (_, i) => ({ name:'φ' + (100 + i), nominal:100 + i, upper:0.02, lower:0, type:'穴' })) });
+  await pg.click('text=RS-3').catch(() => {}); await pg.waitForTimeout(300);
+  await pg.click('button:has-text("成績書")'); await pg.waitForTimeout(300);
+  const lb = await pg.pdf({ preferCSSPageSize:true });
+  const lt = require('child_process').spawnSync('python3', ['-c', 'import sys,io,pypdf;r=pypdf.PdfReader(io.BytesIO(sys.stdin.buffer.read()));print(len(r.pages));print("".join(p.extract_text() for p in r.pages))'], { input:lb }).stdout.toString();
+  const lp = +lt.split('\n')[0], miss = Array.from({ length:45 }, (_, i) => 100 + i).filter(n => !lt.includes('φ' + n) && !lt.includes(String(n)));
+  ok('S8 行の多い成績書（45行）→ 全行が複数ページに続けて印刷される・総合判定まで出る', lp >= 2 && !miss.length && /総合判定/.test(lt), 'pages=' + lp + ' missing=' + miss.join(','));
   await pg.close();
   return R;
 }

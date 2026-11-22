@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.9.0";
+const VER = "v2.9.1";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -1400,8 +1400,8 @@ function renderReport(body){
   ]));
   const sheets = reportSheets(dims);
   sheets.forEach(e => inner.appendChild(e));
-  // printing the extra A3 sheet needs the page to flow past the screen height; reports without it print exactly as before
-  if (sheets.some(e => e.classList.contains("drw-sheet"))){ inner.classList.add("print-wide"); body.classList.add("print-flow"); body.parentNode.classList.add("print-flow"); }
+  // print: let the page flow past the screen height so every row (and the A3 sheets) is printed
+  inner.classList.add("print-wide"); body.classList.add("print-flow"); body.parentNode.classList.add("print-flow");
 }
 
 /* ── numbered drawing for the report (v2.9.0): each report row that has a position on the drawing gets its No. in a balloon.
