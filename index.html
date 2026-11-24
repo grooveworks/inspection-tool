@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.9.2";
+const VER = "v2.10.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -312,7 +312,8 @@ function dimFromJSON(d, id){
     id, name: d.name || (type === "距離" ? "" + d.nominal : "φ" + d.nominal),
     tClass: d.tClass || "", nominal: parseFloat(d.nominal), upper: parseFloat(d.upper), lower: parseFloat(d.lower),
     type, qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, inReport: d.inReport !== false,
-    method: d.method || "", toolNo: d.toolNo || "", jobNo: d.jobNo || "", locs: locsOf(d.locs)
+    method: d.method || "", toolNo: d.toolNo || "", jobNo: d.jobNo || "", locs: locsOf(d.locs),
+    ...(d.gen ? { gen: String(d.gen) } : {})   // general-tolerance row: name of the maker standard (e.g. "YGK-2-001")
   };
 }
 
@@ -817,7 +818,8 @@ function buildRow(dim){
   const nameRow = h("div", { style:"display:flex;align-items:baseline;gap:5px;min-width:0;overflow:hidden;white-space:nowrap" }, [
     h("span", { style:"font-size:15px;font-weight:800;flex-shrink:0", text:dim.name }),
     dim.tClass ? h("span", { style:"font-size:12px;font-weight:700;padding:1px 5px;border-radius:6px;background:#E1F0FF;color:#0062CC;flex-shrink:0", text:dim.tClass }) : null,
-    dim.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368;flex-shrink:0", text:"×" + dim.qty }) : null
+    dim.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368;flex-shrink:0", text:"×" + dim.qty }) : null,
+    dim.gen ? h("span", { class:"gen-badge", title:"普通公差（" + dim.gen + "）", style:"font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0", text:"普通" }) : null
   ]);
   const tags = [];
   if (dim.method) tags.push(dim.method);

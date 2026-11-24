@@ -371,6 +371,30 @@ async function cloudListTests(browser, html, errs) {
   return R;
 }
 
+async function genTests(browser, html, errs) {
+  // general-tolerance rows (dims[].gen = maker standard name) → "普通" badge on the measurement tab
+  const pg = await open(browser, html, 820, 1180, errs, 'gen');
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const j = { partName:'GENTEST', drawingNo:'GT-1', dims:[
+    { name:'φ47', tClass:'P7', nominal:47, upper:-0.017, lower:-0.042, type:'穴' },
+    { name:'φ20', nominal:20, upper:0.3, lower:0, type:'穴', qty:2, gen:'YGK-2-001' },
+    { name:'φ60', nominal:60, upper:0, lower:-0.3, type:'軸', gen:'YGK-2-001', inReport:false } ] };
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(600);
+  const p = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(x => x.drawingNo === 'GT-1'));
+  ok('G1 取込で gen（規格名）が保存される・gen のない行には項目を作らない', p.dims[1].gen === 'YGK-2-001' && p.dims[2].gen === 'YGK-2-001' && !('gen' in p.dims[0]), JSON.stringify(p.dims.map(d => d.gen)));
+  ok('G2 成績書の掲載は取込JSONの inReport のまま（gen では変えない）', p.dims[1].inReport === true && p.dims[2].inReport === false);
+  if (!(await pg.$('.gen-badge'))) { await pg.click('text=GENTEST'); await pg.waitForTimeout(400); }
+  const rows = await pg.evaluate(() => [...document.querySelectorAll('tr')].filter(r => r.querySelector('select')).map(r => ({ t:r.innerText.split('\n')[0] + ' ' + r.innerText.split('\n')[1], g:!!r.querySelector('.gen-badge') })));
+  const badges = await pg.$$eval('.gen-badge', b => b.map(x => x.textContent + '|' + x.getAttribute('title')));
+  ok('G3 測定タブ：gen のある行だけ「普通」の印（title に規格名）', badges.length === 2 && badges.every(b => b === '普通|普通公差（YGK-2-001）') && rows.filter(r => r.g).length === 2, JSON.stringify(badges) + ' ' + JSON.stringify(rows));
+  // additional import (寸法編集 → 追加インポート) uses the same converter
+  const p2 = await pg.evaluate(() => { const d = dimFromJSON({ nominal:8, upper:0.2, lower:0, type:'穴', gen:'HES D 0001-08 1級' }, 99); return d.gen; });
+  ok('G4 追加インポートの変換でも gen を保持', p2 === 'HES D 0001-08 1級', p2);
+  await pg.close();
+  return R;
+}
+
 (async () => {
   const browser = await chromium.launch(); const errs = [];
   const a = await shots(browser, baseHtml, 'before', errs), b = await shots(browser, newHtml, 'after', errs);
@@ -378,6 +402,8 @@ async function cloudListTests(browser, html, errs) {
   for (const k of b) console.log((a.includes(k) ? diff(`${outDir}/before_${k}.png`, `${outDir}/after_${k}.png`) : 'new screen').padEnd(32), k);
   console.log('== 取込試験（改修後）');
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
+  console.log('== 普通公差の印の試験（改修後）');
+  for (const r of await genTests(browser, newHtml, errs)) console.log(r);
   console.log('== 図面タブ試験（改修後）');
   for (const r of await drawingTests(browser, newHtml, errs)) console.log(r);
   console.log('== 成績書の番号付き図面試験（改修後）');
