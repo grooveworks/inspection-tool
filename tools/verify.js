@@ -38,7 +38,7 @@ async function shots(browser, html, prefix, errs) {
     await pg.click('button:has-text("寸法編集")'); await pg.waitForTimeout(200); await snap('edit');
     await pg.click('button:has-text("編集を閉じる")'); await pg.waitForTimeout(200);
     await pg.click('button:has-text("成績書")'); await pg.waitForTimeout(300); await snap('report');
-    if (await pg.$('button:text-matches("^NC")')) { await pg.click('button:text-matches("^NC")'); await pg.waitForTimeout(300); await snap('nc'); }
+    if (await pg.$('button:text-matches("^(NC|CAM)")')) { await pg.click('button:text-matches("^(NC|CAM)")'); await pg.waitForTimeout(300); await snap('nc'); }
     await pg.close();
   }
   return got;
@@ -78,10 +78,12 @@ async function importTests(browser, html, errs) {
   await pg.click('button:text-is("測定")').catch(()=>{}); await pg.waitForTimeout(200);
   const inp = (await pg.$$('td input:not([type=checkbox])'))[0]; if (inp) { await inp.fill('49.925'); await pg.waitForTimeout(800); }
   // NCチェック欄
-  await pg.click('button:text-matches("^NC")'); await pg.waitForTimeout(300);
+  await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(300);
   const boxes = await pg.$$('input[type=checkbox]'); if (boxes[0]) { await boxes[0].check(); await pg.waitForTimeout(700); }
   const chk = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects'))[0].nc.features[0].chk);
   ok('2 NCチェック欄が保存される', chk === true);
+  const camTx = await pg.evaluate(() => document.body.innerText);
+  ok('N1 表示名がCAM：タブ「CAM」・「CAMデータ取込」ボタン・画面にNCの表示が残っていない', !!(await pg.$('button:text-matches("^CAM")')) && !!(await pg.$('button:text-is("CAMデータ取込")')) && !/(^|[^A-Za-z])NC([^A-Za-z]|$)/m.test(camTx), (camTx.match(/.{0,10}NC.{0,10}/) || [''])[0]);
   await imp(full); L = await list();
   ok('3 同じ図番を再取込 → NCだけ置換・測定値保持・案件増えない', L.length === 1 && L[0].m1 === '49.925' && L[0].nc === nTot && dialogs.length === 1, JSON.stringify(L) + ' dialogs=' + dialogs.length);
   await imp({ drawingNo: full.drawingNo, nc: { dists: [{ nominal:16, upper:-0.05, lower:-0.3 }] } }); L = await list();
@@ -128,6 +130,8 @@ async function drawingTests(browser, html, errs) {
   await pg.click('text=φ10 >> nth=0'); await pg.waitForTimeout(1500);
   const lbl = await pg.textContent('text=/ページ/').catch(() => '');
   ok('D4 行タップ → 該当ページへ移動して枠が出る', /^2 \//.test(lbl) && (await pg.$$('.drw-hl')).length === 1, lbl);
+  const drTx = await pg.evaluate(() => document.body.innerText);
+  ok('N2 図面タブの区分名がCAM（CAM 穴・形状／CAM 距離）・NCの表示が残っていない', /CAM 穴・形状/.test(drTx) && /CAM 距離/.test(drTx) && !/(^|[^A-Za-z])NC([^A-Za-z]|$)/m.test(drTx), (drTx.match(/.{0,10}NC.{0,10}/) || [''])[0]);
   // same page → the drawing is not redrawn, only the box moves; the list is not rebuilt
   const rowSel = t => 'div[style*="cursor: pointer"]:has(span:text-is("' + t + '"))';
   await pg.click(rowSel('穴A')); await pg.waitForTimeout(1500);
@@ -207,14 +211,14 @@ async function drawingTests(browser, html, errs) {
   ok('R1 改訂データだけ取込 → 既存案件に保存・寸法/測定値/NC/図面はそのまま・案件増えない', after.length === nBefore && a1.rev && a1.rev.items.length === 3 && strip(a1) === strip(before), (a1.rev ? a1.rev.items.length : 'no rev') + ' / ' + after.length);
   let tx = await pg.evaluate(() => document.body.innerText);
   ok('R2 測定タブ：変わった行に「改訂：旧 φ11」・下に削除分（径）とその他の変更', /改訂：旧 φ11/.test(tx) && /旧版（DT-1-00）から削除/.test(tx) && /φ9 削除/.test(tx) && /材質変更/.test(tx) && !/3 削除/.test(tx), tx.slice(0, 0));
-  await pg.click('button:text-matches("^NC")'); await pg.waitForTimeout(300);
+  await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(300);
   tx = await pg.evaluate(() => document.body.innerText);
   ok('R3 NCタブ：形状・距離の行に印、下に削除分（距離）', /改訂：深さ変更/.test(tx) && /改訂：旧 5 0\/−0\.1（公差のみ）（推定）/.test(tx) && /3 削除/.test(tx) && !/φ9 削除/.test(tx));
   await pg.click('button:text-is("図面")'); await pg.waitForTimeout(300);
   tx = await pg.evaluate(() => document.body.innerText);
   ok('R4 図面タブ：行に改訂の印', /改訂：旧 φ11/.test(tx) && /改訂：深さ変更/.test(tx));
   await impJ({ drawingNo:'DT-1', nc:j.nc });   // NC replaced → marks stay (matched by key)
-  await pg.click('button:text-matches("^NC")'); await pg.waitForTimeout(300);
+  await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(300);
   tx = await pg.evaluate(() => document.body.innerText);
   ok('R5 NCを取込み直しても改訂の印は残る', /改訂：深さ変更/.test(tx) && /改訂：旧 5/.test(tx));
   await impJ({ drawingNo:'NOPE-9', rev });

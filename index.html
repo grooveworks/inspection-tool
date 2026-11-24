@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.9.1";
+const VER = "v2.9.2";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -555,7 +555,7 @@ async function renderList(){
               const drw = drawingOf(raw.drawing);
               const rev = raw.rev ? revOf(raw.rev) : null;
               if (raw.rev && !rev) throw new Error("改訂データ(rev)の形式が不正です");
-              if (!hasDims && !nc && !drw && !rev) throw new Error("寸法データ(dims)またはNCデータ(nc)がありません");
+              if (!hasDims && !nc && !drw && !rev) throw new Error("寸法データ(dims)またはCAMデータ(nc)がありません");
               const dno = String(raw.drawingNo || "").trim();
               // same drawing number already exists -> update its NC data / drawing link only (dims / measurements untouched)
               if ((nc || drw || rev) && dno){
@@ -565,7 +565,7 @@ async function renderList(){
                 if (hit){
                   const ex = normalizeProject(await Store.getProject(hit.id) || hit);
                   if (nc){
-                    if (ncOf(ex) && !confirm((ex.partName || dno) + " のNCデータを置き換えますか")) return;
+                    if (ncOf(ex) && !confirm((ex.partName || dno) + " のCAMデータを置き換えますか")) return;
                     ex.nc = nc;
                   }
                   if (drw) ex.drawing = drw;
@@ -585,7 +585,7 @@ async function renderList(){
                 }
               }
               if (hasDims) parseImport(IMPTEXT);   // same dims validation as before
-              else if (!dno) throw new Error("NCデータ・図面だけの場合は図番(drawingNo)が必要です");
+              else if (!dno) throw new Error("CAMデータ・図面だけの場合は図番(drawingNo)が必要です");
               else if (!nc) throw new Error("図番 " + dno + " の案件がありません");
               const p = newProject({ partName:raw.partName, drawingNo:raw.drawingNo, preset:false, rounds:NF.rounds });
               p.dims = hasDims ? raw.dims.map((x,i) => dimFromJSON(x, i+1)) : [];
@@ -685,7 +685,7 @@ function renderProject(){
     h("div", { style:"min-width:180px" }, [ inP, inD ]),
     h("div", { style:"flex:1" }),
     h("div", { style:"display:flex;background:#F1F3F4;border-radius:11px;padding:3px;gap:3px" }, [
-      tabBtn("測定", "meas"), tabBtn("NC" + (ncCount ? " (" + ncCount + ")" : ""), "nc"), tabBtn("図面", "draw"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
+      tabBtn("測定", "meas"), tabBtn("CAM" + (ncCount ? " (" + ncCount + ")" : ""), "nc"), tabBtn("図面", "draw"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
     ]),
     h("div", { style:"font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;" + (isCloud() ? "background:#E6F4EA;color:#0B7A45" : "background:#FEF7E0;color:#8A6100"), text: isCloud() ? "同期" : "ローカル" })
   ]));
@@ -1091,8 +1091,8 @@ function drawRows(){
   P.dims.forEach(d => R.push({ g:"測定", n:d.name, t:f(d.upper) + " / " + f(d.lower), v:"", locs:d.locs || [], rv:rv("dims", d) }));
   const nc = ncOf(P);
   if (nc){
-    nc.features.forEach(x => R.push({ g:"NC 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [], rv:rv("features", x) }));
-    nc.dists.forEach(x => R.push({ g:"NC 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [], rv:rv("dists", x) }));
+    nc.features.forEach(x => R.push({ g:"CAM 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [], rv:rv("features", x) }));
+    nc.dists.forEach(x => R.push({ g:"CAM 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [], rv:rv("dists", x) }));
   }
   return R;
 }
@@ -1252,7 +1252,7 @@ function renderNC(body){
   inner.appendChild(h("div", { style:"display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
     h("div", { style:"flex:1" }),
     h("button", { style:"height:32px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;" + (SHOWNCIMP ? "border:1px solid #007AFF;background:#E1F0FF;color:#0062CC" : "border:1px solid #DADCE0;background:#FFF;color:#202124"),
-      text: SHOWNCIMP ? "取込を閉じる" : "NCデータ取込", onclick: () => { SHOWNCIMP = !SHOWNCIMP; renderProject(); } })
+      text: SHOWNCIMP ? "取込を閉じる" : "CAMデータ取込", onclick: () => { SHOWNCIMP = !SHOWNCIMP; renderProject(); } })
   ]));
 
   if (SHOWNCIMP){
@@ -1260,7 +1260,7 @@ function renderNC(body){
     ta.value = NCTEXT;
     const msg = h("div", { style:"margin-top:8px;font-size:13px;font-weight:600;color:#B3261E" });
     inner.appendChild(h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:16px;margin-bottom:10px" }, [
-      h("div", { style:"font-size:12px;color:#5F6368;margin-bottom:10px", text: nc ? "貼り付けたJSONで現在のNCデータを置き換えます" : "NCデータのJSONを貼り付け" }),
+      h("div", { style:"font-size:12px;color:#5F6368;margin-bottom:10px", text: nc ? "貼り付けたJSONで現在のCAMデータを置き換えます" : "CAMデータのJSONを貼り付け" }),
       ta, msg,
       h("div", { style:"display:flex;gap:8px;margin-top:12px" }, [
         h("button", { style:"min-height:44px;padding:0 24px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:14px;font-weight:600", text:"取込",
@@ -1268,7 +1268,7 @@ function renderNC(body){
             try {
               const raw = JSON.parse(NCTEXT);
               const next = ncFromJSON(raw.nc || raw);
-              if (nc && !confirm("現在のNCデータを置き換えますか")) return;
+              if (nc && !confirm("現在のCAMデータを置き換えますか")) return;
               P.nc = next; NCTEXT = ""; SHOWNCIMP = false; save(); renderProject();
             } catch (err){ msg.textContent = err instanceof SyntaxError ? "JSONの形式が不正です" : err.message; }
           } }),
@@ -1279,7 +1279,7 @@ function renderNC(body){
   }
 
   if (!nc){
-    inner.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px;background:#FFF;border:1px solid #DADCE0;border-radius:16px", text:"NCデータがまだありません" }));
+    inner.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px;background:#FFF;border:1px solid #DADCE0;border-radius:16px", text:"CAMデータがまだありません" }));
     return;
   }
 
