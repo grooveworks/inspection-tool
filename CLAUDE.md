@@ -21,7 +21,7 @@
    node tools/verify.js ../baseline_vX.Y.Z.html index.html ../verify_out
    ```
    - 画面差分: 頼まれた変更とバージョン表記以外に差分が出たら原因を調べる。差分のある画面は必ず画像を目で見る。
-   - 取込試験: 9項目すべて OK。図面タブ試験: D1〜D16・改訂 R1〜R6 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。成績書の番号付き図面・印刷試験: S1〜S8 すべて OK（印刷は Chromium のPDF出力で用紙サイズを確認。python3 の pypdf を使う）。一覧の読込試験: C1〜C7・ログイン L1〜L4 すべて OK（Firebase SDK・Auth と Firestore REST を差し替え。この試験は http://127.0.0.1 で配信して行う。file:// だと localStorage が次のページに届かず不安定になる）。
+   - 取込試験: 9項目すべて OK。図面試験: D1〜D17・測定タブの図面 M0〜M3・縦横の持ち替え O1〜O2・改訂 R1〜R6・タブ構成 T1・CAMカード K1〜K6・普通公差 G1〜G12 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。成績書の番号付き図面・印刷試験: S1〜S8 すべて OK（印刷は Chromium のPDF出力で用紙サイズを確認。python3 の pypdf を使う）。一覧の読込試験: C1〜C7・ログイン L1〜L4 すべて OK（Firebase SDK・Auth と Firestore REST を差し替え。この試験は http://127.0.0.1 で配信して行う。file:// だと localStorage が次のページに届かず不安定になる）。
    - ページエラー: none。
    - 新しい挙動を足したら、`tools/verify.js` の試験にも足す。
 6. **push**: `git push -u origin feature/<内容>`（浅いクローンなので `-c push.negotiate=true` を付ける）。
@@ -69,15 +69,24 @@
 - 普通公差を含む行に「普通」の印：dims は gen、features は dia/depth/chamfer に「（普通）」を含む（2行目に普通の値を並べる）、dists は note が「普通」で始まる。
 - locs の `g:1` は普通公差で決まる箇所。図面タブでいつもオレンジの点線枠（同じ枠は1つにまとめる、表示中のページ分だけ）。選んだ行の赤枠はその上。
 
+## タブ統合（v2.12.0〜）
+- タブは「測定｜CAM｜成績書」の3つ。図面タブは廃止（TAB "draw" は "nc" に読み替え）。上の節の「図面タブ」は v2.12.0 以降 CAMタブ（と測定タブの図面）を指す。
+- CAMタブ = 図面つきの画面。左（縦持ちでは上 42%）に形状ごとのカード（チェック欄・形状名・×個数・図・径/深さ/ねじ/面取り・R/位置度/粗さ/距離/注記、普通公差の値ごとに「普通」の印）、右（縦持ちでは下）に図面。カードをタップすると図面上の位置に赤枠。一覧の上に図面名・「普通公差 〇〇 適用」の帯・CAMデータ取込。
+- 距離に `f`（所属する形状名）があればその形状のカードの「距離」行に入る（位置もまとめて赤枠）。該当形状がない・f なしの距離は単独のカード。
+- 測定タブは図面が紐づいていれば「図面」ボタン → 表の横（縦持ちでは下）に図面、寸法の行タップで位置に赤枠（入力欄のタップは無視）。「図面を閉じる」で表だけに戻り図面のメモリを解放。案件を開くたびに閉じた状態から。
+- 選んでいた行はタブごとに覚える（戻ると同じ赤枠）。画面幅 900px をまたぐ回転・リサイズで並びを作り直す（200ms 待ってから）。
+- 図面が未読込のときにカードや行をタップしても印だけ付ける（v2.12.0 で、表示中の図面を描き直さずに再表示すると止まる不具合も修正）。
+
 ## データ形式（取込JSON）
 抽出の手順と形式の正本はプロジェクトの「図面公差抽出ナレッジ.md」。アプリ側の要点だけ記す。
 - 取込口は案件一覧の「JSONから取込」1か所。`{partName, drawingNo, dims[], nc{features[], dists[]}}`
 - 同じ `drawingNo` の案件がある & `nc` あり → その案件の `nc` だけ置換（dims・測定値は保持、既存NCがあれば確認ダイアログ）
 - 該当なし → 新規案件（dims なし・nc のみでも可。nc のみは `drawingNo` 必須）
 - dims のみ → 従来通り新規案件
+- `nc.dists[]` の `f` は所属する形状名（features の name と同じ文字列）。CAMタブでその形状のカードにまとめる（v2.12.0〜）。
 - `nc` は表示専用。各行の `chk`（チェック欄）は案件データに保存。取込で置換するとチェックは外れる。
 - dims / nc.features / nc.dists の各行は `locs:[{p,x,y,w,h}]`（図面上の位置、ページ番号と0〜1の割合）を持てる。同じ図番の再取込では既存寸法に locs だけ反映（値・測定値は保持）。
-- 図面タブ: 案件の `drawing:{fileId,name}` に Google Drive の図面PDFを紐づけ、行タップで該当位置を表示。設定値（Cloudプロジェクト inspection-tool-515411、OAuthクライアントID、APIキー、ログインアカウント info-manager@groove-works.jp）は index.html の `GCFG`。ログインは login_hint でこのアカウントを指定し、アカウント選択画面を出さない（v2.4.1〜）。APIキーは Drive/Picker のみ・リファラ https://grooveworks.github.io/* のみに制限済み（/inspection-tool/* まで絞ると Picker が「デベロッパーキーが無効」になる）。
+- 図面（CAMタブ・測定タブの「図面」）: 案件の `drawing:{fileId,name}` に Google Drive の図面PDFを紐づけ、行タップで該当位置を表示。設定値（Cloudプロジェクト inspection-tool-515411、OAuthクライアントID、APIキー、ログインアカウント info-manager@groove-works.jp）は index.html の `GCFG`。ログインは login_hint でこのアカウントを指定し、アカウント選択画面を出さない（v2.4.1〜）。APIキーは Drive/Picker のみ・リファラ https://grooveworks.github.io/* のみに制限済み（/inspection-tool/* まで絞ると Picker が「デベロッパーキーが無効」になる）。
 - 図面の紐づけは取込JSONの `drawing:{fileId,name}` で行う（v2.4.0〜）。抽出時に Claude が図面PDFを Drive の「寸法検査_図面」フォルダ（ID 1kg33mlBqbkuF377u1Dn7zZie7u98mEgA）へ入れ、その fileId を JSON に書く。ユーザーに Drive 操作をさせない。
   - 同じ図番の案件がある & `drawing` あり → 図面だけ紐づけ直す（ncなしなら NC は触らない）。`drawing` だけで該当案件なし → エラー。
   - 手動の「図面を選ぶ」はフォルダ一覧を出さない（PDFのみ・一覧表示・図番の先頭2区切りで検索済み）。

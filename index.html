@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.11.0";
+const VER = "v2.12.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -329,7 +329,7 @@ function ncFromJSON(nc){
   }));
   const dists = (Array.isArray(nc.dists) ? nc.dists : []).map(d => {
     if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("距離データの形式が不正です (nominal, upper, lower が必要)");
-    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true, locs:locsOf(d.locs) };
+    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true, locs:locsOf(d.locs) , ...(d.f ? { f:String(d.f) } : {}) };   // f = name of the feature (hole / shape) this distance belongs to
   });
   if (!features.length && !dists.length) throw new Error("ncデータ(features / dists)がありません");
   return { features, dists };
@@ -480,7 +480,7 @@ const MONO = "font-family:'SF Mono',Menlo,Consolas,monospace;font-variant-numeri
 const app = () => document.getElementById("app");
 
 let P = null, TAB = "meas", EDIT = false, SHOWNEW = false, SHOWIMP = false, unsub = null, saveT = null;
-let NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }, IMPTEXT = "", MGTEXT = "", SHOWMERGE = false, NCTEXT = "", SHOWNCIMP = false;
+let NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }, IMPTEXT = "", MGTEXT = "", SHOWMERGE = false, NCTEXT = "", SHOWNCIMP = false, MEASDRW = false, DRWSEL = {};   // MEASDRW: drawing panel open on the measurement tab
 
 function save(){ clearTimeout(saveT); saveT = setTimeout(() => { if (P) Store.saveProject(P); }, 400); }
 
@@ -583,7 +583,7 @@ async function renderList(){
                   }
                   await Store.saveProject(ex);
                   IMPTEXT = ""; SHOWIMP = false;
-                  await openProject(ex.id); TAB = nc ? "nc" : drw ? "draw" : "meas"; renderProject();
+                  await openProject(ex.id); TAB = nc || drw ? "nc" : "meas"; renderProject();
                   return;
                 }
               }
@@ -662,7 +662,7 @@ async function openProject(id){
   const p = await Store.getProject(id);
   if (!p) return;
   P = normalizeProject(p);
-  TAB = "meas"; EDIT = false; SHOWMERGE = false; SHOWNCIMP = false; DRW.sel = null; DRW.msg = "";
+  TAB = "meas"; EDIT = false; SHOWMERGE = false; SHOWNCIMP = false; MEASDRW = false; DRWSEL = {}; DRW.sel = null; DRW.msg = "";
   if (unsub){ unsub(); unsub = null; }
   unsub = Store.onProjectSync(id, data => {
     if (data && data.updatedAt > (P.updatedAt || 0) + 2000){ Object.assign(P, data); normalizeProject(P); renderProject(); }
@@ -671,6 +671,13 @@ async function openProject(id){
 }
 
 /* ── project shell ── */
+// tablet rotated (or window resized) across the side-by-side / stacked boundary → lay the drawing screens out again
+let LAYOUT_NARROW = innerWidth < 900, RSZ_T = 0;
+addEventListener("resize", () => { clearTimeout(RSZ_T); RSZ_T = setTimeout(() => {
+  const n = innerWidth < 900; if (n === LAYOUT_NARROW) return; LAYOUT_NARROW = n;
+  if (P && (TAB === "nc" || (TAB === "meas" && MEASDRW))) renderProject();
+}, 200); });
+
 function renderProject(){
   const root = app();
   root.innerHTML = "";
@@ -680,7 +687,7 @@ function renderProject(){
   const inP = h("input", { type:"text", placeholder:"品名を入力", value:P.partName || "", style:"display:block;width:100%;border:none;background:transparent;font-size:15px;font-weight:700;padding:1px 3px", oninput: e => { P.partName = e.target.value; save(); } });
   const inD = h("input", { type:"text", placeholder:"図番を入力", value:P.drawingNo || "", style:"display:block;width:100%;border:none;background:transparent;font-size:12px;color:#5F6368;padding:1px 3px;" + MONO, oninput: e => { P.drawingNo = e.target.value; save(); } });
   const tabBtn = (label, key) => h("button", { style:"height:34px;padding:0 14px;border:none;border-radius:8px;font-size:13px;font-weight:600;" + (TAB === key ? "background:#FFF;color:#0062CC" : "background:transparent;color:#5F6368"), text:label,
-    onclick: () => { TAB = key; renderProject(); } });
+    onclick: () => { DRWSEL[TAB] = DRW.sel; TAB = key; DRW.sel = DRWSEL[key] != null ? DRWSEL[key] : null; renderProject(); } });
   const repCount = P.dims.filter(d => d.inReport !== false && latestOf(P.meas, d.id) !== "").length;
   const ncD = ncOf(P), ncCount = ncD ? ncD.features.length + ncD.dists.length : 0;
 
@@ -689,17 +696,17 @@ function renderProject(){
     h("div", { style:"min-width:180px" }, [ inP, inD ]),
     h("div", { style:"flex:1" }),
     h("div", { style:"display:flex;background:#F1F3F4;border-radius:11px;padding:3px;gap:3px" }, [
-      tabBtn("測定", "meas"), tabBtn("CAM" + (ncCount ? " (" + ncCount + ")" : ""), "nc"), tabBtn("図面", "draw"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
+      tabBtn("測定", "meas"), tabBtn("CAM" + (ncCount ? " (" + ncCount + ")" : ""), "nc"), tabBtn("成績書 " + (repCount ? "(" + repCount + ")" : ""), "report")
     ]),
     h("div", { style:"font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;" + (isCloud() ? "background:#E6F4EA;color:#0B7A45" : "background:#FEF7E0;color:#8A6100"), text: isCloud() ? "同期" : "ローカル" })
   ]));
 
   const body = h("div", { style:"flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:8px 6px" });
   shell.appendChild(body);
-  if (TAB !== "draw" && DRW.cv){ DRW.cv.canvas.width = DRW.cv.canvas.height = 0; DRW.cv = null; }   // free memory when leaving the drawing tab
-  if (TAB === "meas") renderMeas(body);
-  else if (TAB === "nc"){ body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderNC(body); }
-  else if (TAB === "draw"){ body.style.padding = "0"; renderDrawing(body); }
+  if (TAB === "draw") TAB = "nc";
+  if (!(TAB === "nc" || (TAB === "meas" && MEASDRW)) && DRW.cv){ DRW.cv.canvas.width = DRW.cv.canvas.height = 0; DRW.cv = null; }   // free memory when no drawing is on screen
+  if (TAB === "meas"){ body.style.padding = "0"; renderDrawing(body, "meas"); }
+  else if (TAB === "nc"){ body.style.padding = "0"; renderDrawing(body, "nc"); }
   else { body.style.overflowY = "auto"; body.style.paddingBottom = "24px"; renderReport(body); }
 }
 
@@ -731,6 +738,8 @@ function renderMeas(body){
     sumCell("ng", "NG", st.ng, "#FCE8E6", "#B3261E"),
     sumCell("none", "未測定", st.none, "#FFF", "#5F6368"),
     h("div", { style:"flex:1" }),
+    P.drawing ? h("button", { class:"meas-drw-btn", style:"height:32px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;" + (MEASDRW ? "border:1px solid #007AFF;background:#E1F0FF;color:#0062CC" : "border:1px solid #DADCE0;background:#FFF;color:#202124"),
+      text: MEASDRW ? "図面を閉じる" : "図面", onclick: () => { MEASDRW = !MEASDRW; DRW.sel = null; renderProject(); } }) : null,
     h("button", { style:"height:32px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;" + (EDIT ? "border:1px solid #007AFF;background:#E1F0FF;color:#0062CC" : "border:1px solid #DADCE0;background:#FFF;color:#202124"), text: EDIT ? "編集を閉じる" : "寸法編集",
       onclick: () => { EDIT = !EDIT; renderProject(); } })
   ]));
@@ -1090,38 +1099,29 @@ async function loadDrawing(fileId){
   await openPdfBytes(await r.arrayBuffer(), fileId);
 }
 
-function drawRows(){
-  const R = [], f = v => fmtTol(v);
-  const rv = (g, x) => { const i = revFind(g, x); return i ? revText(i) : ""; };
-  const gv = x => [].concat(x.dia || [], x.depth || [], x.chamfer || []).filter(t => /（普通）/.test(t)).map(t => t.replace("（普通）", ""));   // general-tolerance values of a CAM row
-  P.dims.forEach(d => R.push({ g:"測定", n:d.name, t:f(d.upper) + " / " + f(d.lower), v:"", locs:d.locs || [], rv:rv("dims", d), gen:!!d.gen, gl:[] }));
-  const nc = ncOf(P);
-  if (nc){
-    nc.features.forEach(x => { const l = gv(x); R.push({ g:"CAM 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [], rv:rv("features", x), gen:l.length > 0, gl:l }); });
-    nc.dists.forEach(x => R.push({ g:"CAM 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [], rv:rv("dists", x), gen:/^普通/.test(x.note || ""), gl:[] }));
-  }
-  return R;
-}
-
-function renderDrawing(body){
-  const wrap = h("div", { style:"flex:1;min-height:0;display:flex;" + (innerWidth < 900 ? "flex-direction:column" : "") });
+function renderDrawing(body, mode){
+  const narrow = innerWidth < 900, meas = mode === "meas", open = !meas || (MEASDRW && !!P.drawing);
+  const wrap = h("div", { style:"flex:1;min-height:0;display:flex;" + (narrow ? "flex-direction:column" : "") });
   body.appendChild(wrap);
-  const list = h("div", { style:"flex-shrink:0;overflow-y:auto;background:#FFF;" + (innerWidth < 900 ? "height:38%;border-bottom:1px solid #DADCE0" : "width:340px;border-right:1px solid #DADCE0") });
+  // left (tablet: top): CAM list by feature, or the measurement table; right (tablet: bottom): the drawing
+  const list = meas ? h("div", { style:"flex:1;min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden;padding:8px 6px" })
+                    : h("div", { style:"flex-shrink:0;overflow-y:auto;background:#FFF;" + (narrow ? "height:42%;border-bottom:1px solid #DADCE0" : "width:440px;border-right:1px solid #DADCE0") });
+  const pane = h("div", { style:"position:relative;min-height:0;min-width:0;display:flex;flex-direction:column;" + (!meas ? "flex:1" : narrow ? "height:46%;flex-shrink:0;border-top:1px solid #DADCE0" : "width:44%;flex-shrink:0;border-left:1px solid #DADCE0") });
   const view = h("div", { style:"flex:1;min-height:0;position:relative;overflow:auto;background:#5F6368;touch-action:pan-x pan-y" });   // pinch is handled below, not by the browser
   const page = h("div", { style:"position:relative;margin:0 auto;background:#FFF" });
   view.appendChild(page);
-  wrap.appendChild(list); wrap.appendChild(view);
+  wrap.appendChild(list);
 
-  // toolbar (drawing name + choose) on top of the list
+  // drawing name + choose / open (CAM: top of the list, measurement: top of the drawing pane)
   const d = P.drawing;
   const status = h("div", { style:"font-size:12px;color:#B3261E;margin-top:6px", text: DRW.msg });
-  list.appendChild(h("div", { style:"padding:10px 12px;border-bottom:1px solid #E8EAED;background:#F8F9FA" }, [
-    h("div", { style:"font-size:12px;color:#5F6368", text:"図面（Google Drive）" }),
-    h("div", { style:"font-size:13px;font-weight:600;word-break:break-all;margin-top:2px", text: d && d.name ? d.name : "未設定" }),
-    (() => { const g = P.gen || [...new Set(P.dims.map(x => x.gen).filter(Boolean))].join("・");
-      return g ? h("div", { class:"gen-std", style:"display:flex;gap:6px;align-items:center;margin-top:8px;padding:6px 8px;border:1px solid #9AA0A6;border-radius:8px;background:#FFF;font-size:12px;font-weight:700;color:#3C4043" },
-        [ h("span", { style:"font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0", text:"普通" }), h("span", { text:"普通公差 " + g + " 適用" }) ]) : null; })(),
-    h("div", { style:"display:flex;gap:8px;margin-top:8px" }, [
+  const gstd = P.gen || [...new Set(P.dims.map(x => x.gen).filter(Boolean))].join("・");
+  const head = h("div", { style:"padding:10px 12px;border-bottom:1px solid #E8EAED;background:#F8F9FA" }, [
+    h("div", { style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, [
+      h("div", { style:"flex:1;min-width:0" }, [
+        h("div", { style:"font-size:12px;color:#5F6368", text:"図面（Google Drive）" }),
+        h("div", { style:"font-size:13px;font-weight:600;word-break:break-all;margin-top:2px", text: d && d.name ? d.name : "未設定" })
+      ]),
       h("button", { style:"height:36px;padding:0 14px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;font-size:13px;font-weight:600", text: d ? "図面を変更" : "図面を選ぶ",
         onclick: async () => {
           try { DRW.msg = ""; const pk = await pickDrawing(); if (!pk) return;
@@ -1131,28 +1131,37 @@ function renderDrawing(body){
       d && DRW.fileId !== d.fileId ? h("button", { style:"height:36px;padding:0 14px;border:none;border-radius:10px;background:#007AFF;color:#FFF;font-size:13px;font-weight:600", text:"図面を開く",
         onclick: async () => { try { DRW.msg = ""; await loadDrawing(d.fileId); renderProject(); } catch (e){ DRW.msg = e.message; renderProject(); } } }) : null
     ]),
+    !meas && gstd ? h("div", { class:"gen-std", style:"display:flex;gap:6px;align-items:center;margin-top:8px;padding:6px 8px;border:1px solid #9AA0A6;border-radius:8px;background:#FFF;font-size:12px;font-weight:700;color:#3C4043" },
+      [ h("span", { style:"font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0", text:"普通" }), h("span", { text:"普通公差 " + gstd + " 適用" }) ]) : null,
     status
-  ]));
+  ]);
 
-  // rows: tapping one only moves the red box (no full re-render → list keeps its scroll, drawing is not redrawn)
-  const rows = drawRows(), rowEls = [];
-  let last = "";
-  rows.forEach((r, i) => {
-    if (r.g !== last){ last = r.g; list.appendChild(h("div", { style:"font-size:12px;color:#5F6368;padding:8px 12px 4px;background:#F8F9FA;border-bottom:1px solid #E8EAED;position:sticky;top:0", text:r.g })); }
-    const on = DRW.sel === i, has = r.locs.length > 0;
-    const el = h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (r.rv || r.gl.length ? "flex-wrap:wrap;" : "") + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
-      onclick: () => { if (!has) return;
-        if (DRW.sel != null && rowEls[DRW.sel]) rowEls[DRW.sel].style.background = "";
-        DRW.sel = i; el.style.background = "#E1F0FF"; show(); } }, [
-      h("span", { style:"font-weight:700;font-size:14px;white-space:nowrap", text:r.n }),
-      r.gen ? h("span", { class:"gen-badge", style:"font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0", text:"普通" }) : null,
-      h("span", { style:"font-size:12px;color:#0062CC;white-space:nowrap;" + MONO, text:r.t }),
-      h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? r.v : "位置なし" }),
-      r.gl.length ? h("div", { class:"gen-vals", style:"flex-basis:100%;font-size:12px;line-height:1.4;color:#5F6368;" + MONO, text:"普通: " + r.gl.join("、") }) : null,
-      r.rv ? h("div", { style:"flex-basis:100%;font-size:11px;font-weight:700;line-height:1.3;color:" + REV_COLOR, text:r.rv }) : null
-    ]);
-    rowEls[i] = el; list.appendChild(el);
-  });
+  let rows = [];
+  const rowEls = [];
+  const mark = (el, on) => { if (!el) return;
+    if (meas){ const c = el.querySelector("td"); if (c) c.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; el.querySelectorAll("td").forEach(td => td.style.outline = ""); el.style.outline = on ? "2px solid #007AFF" : ""; el.style.outlineOffset = "-2px"; }
+    else { el.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; el.style.background = on ? "#E1F0FF" : ""; } };
+  const select = i => { if (DRW.sel != null) mark(rowEls[DRW.sel], false); DRW.sel = i; mark(rowEls[i], true); if (open && DRW.pdf && d && DRW.fileId === d.fileId) show(); };   // drawing not loaded yet → just mark the row
+
+  if (meas){
+    renderMeas(list);
+    rows = P.dims.map(x => ({ locs:x.locs || [] }));
+    list.querySelectorAll("tr[data-row]").forEach(tr => {
+      const i = P.dims.findIndex(x => String(x.id) === tr.getAttribute("data-row")); if (i < 0) return;
+      rowEls[i] = tr;
+      if (!open || !rows[i].locs.length) return;
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", e => { if (e.target.closest("input,select,button,textarea")) return; select(i); });
+      if (DRW.sel === i) mark(tr, true);
+    });
+    if (!open) return;
+    pane.appendChild(head);
+  } else {
+    list.appendChild(head);
+    camList(list, r => rows = r, rowEls, select);
+  }
+  pane.appendChild(view);
+  wrap.appendChild(pane);
 
   if (!DRW.pdf || !d || DRW.fileId !== d.fileId){
     page.style.background = "transparent";
@@ -1160,13 +1169,11 @@ function renderDrawing(body){
     return;
   }
 
-  const pageLbl = h("div", { style:"position:absolute;left:" + (innerWidth < 900 ? 12 : 352) + "px;bottom:14px;background:#FFF;border-radius:10px;padding:6px 10px;font-size:12px;z-index:5" });
+  const pageLbl = h("div", { style:"position:absolute;left:12px;bottom:14px;background:#FFF;border-radius:10px;padding:6px 10px;font-size:12px;z-index:5" });
   const zb = (t, k) => h("button", { style:"width:44px;height:44px;border-radius:12px;border:1px solid #DADCE0;background:#FFF;font-size:20px", text:t,
     onclick: () => { if (DRW.scale){ DRW.scale *= k; show(); } } });
-  body.appendChild(h("div", { style:"position:absolute;right:14px;bottom:14px;display:flex;gap:6px;z-index:5" }, [ zb("−", 1/1.4), zb("＋", 1.4) ]));
-  body.appendChild(pageLbl);
-  body.style.position = "relative";
-  show();
+  pane.appendChild(h("div", { style:"position:absolute;right:14px;bottom:14px;display:flex;gap:6px;z-index:5" }, [ zb("−", 1/1.4), zb("＋", 1.4) ]));
+  pane.appendChild(pageLbl);
 
   // sharp layer: when zoomed in so far that the whole-page image had to be drawn at lower resolution (browser canvas size limit),
   // redraw just the visible area at full resolution after each zoom / scroll
@@ -1217,6 +1224,7 @@ function renderDrawing(body){
   };
   view.addEventListener("touchend", pinchEnd);
   view.addEventListener("touchcancel", pinchEnd);
+  show();   // after the declarations above: with the page image cached (rotation / re-render) show() reaches them synchronously
 
   // draw the page only when page / zoom / file changed (cached in DRW.cv); otherwise just move the boxes
   function show(focus){
@@ -1256,24 +1264,22 @@ function renderDrawing(body){
   }
 }
 
-/* ── NC view (display only) ── */
-function renderNC(body){
-  const inner = h("div", { style:"max-width:1280px;width:100%;margin:0 auto" });
-  body.appendChild(inner);
+/* ── CAM list (by feature) — left of the drawing in the CAM tab ── */
+function camList(list, setRows, rowEls, select){
   const nc = ncOf(P);
   if (nc) P.nc = nc;   // rows below edit these objects directly (check column)
-
-  inner.appendChild(h("div", { style:"display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
+  const box = h("div", { style:"padding:8px 12px 0" });
+  list.appendChild(box);
+  box.appendChild(h("div", { style:"display:flex;align-items:center;gap:8px;margin-bottom:8px" }, [
     h("div", { style:"flex:1" }),
     h("button", { style:"height:32px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;" + (SHOWNCIMP ? "border:1px solid #007AFF;background:#E1F0FF;color:#0062CC" : "border:1px solid #DADCE0;background:#FFF;color:#202124"),
       text: SHOWNCIMP ? "取込を閉じる" : "CAMデータ取込", onclick: () => { SHOWNCIMP = !SHOWNCIMP; renderProject(); } })
   ]));
-
   if (SHOWNCIMP){
     const ta = h("textarea", { placeholder:'{"nc":{"features":[…],"dists":[…]}}', style:"width:100%;height:130px;padding:11px;font-size:13px;line-height:1.6;border:1px solid #DADCE0;border-radius:12px;resize:vertical;" + MONO, oninput: e => NCTEXT = e.target.value });
     ta.value = NCTEXT;
     const msg = h("div", { style:"margin-top:8px;font-size:13px;font-weight:600;color:#B3261E" });
-    inner.appendChild(h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:16px;margin-bottom:10px" }, [
+    box.appendChild(h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:16px;margin-bottom:10px" }, [
       h("div", { style:"font-size:12px;color:#5F6368;margin-bottom:10px", text: nc ? "貼り付けたJSONで現在のCAMデータを置き換えます" : "CAMデータのJSONを貼り付け" }),
       ta, msg,
       h("div", { style:"display:flex;gap:8px;margin-top:12px" }, [
@@ -1293,61 +1299,49 @@ function renderNC(body){
   }
 
   if (!nc){
-    inner.appendChild(h("div", { style:"text-align:center;padding:56px 16px;color:#5F6368;font-size:14px;background:#FFF;border:1px solid #DADCE0;border-radius:16px", text:"CAMデータがまだありません" }));
+    setRows([]);
+    list.appendChild(h("div", { style:"text-align:center;padding:40px 16px;color:#5F6368;font-size:14px", text:"CAMデータがまだありません" }));
     return;
   }
+  // distances with f (feature name) are shown inside that feature; the rest get their own card
+  const own = new Map(), loose = [];
+  nc.dists.forEach(x => { const f = x.f ? nc.features.find(y => y.name === x.f) : null; if (f){ if (!own.has(f)) own.set(f, []); own.get(f).push(x); } else loose.push(x); });
+  const rows = nc.features.map(f => { const ds = own.get(f) || []; return { k:"f", o:f, ds, locs:(f.locs || []).concat(...ds.map(x => x.locs || [])) }; })
+    .concat(loose.map(x => ({ k:"d", o:x, ds:[], locs:x.locs || [] })));
+  setRows(rows);
 
-  const TH = "padding:7px 6px;font-size:12px;font-weight:600;color:#5F6368;text-align:left;border-bottom:1px solid #DADCE0;white-space:nowrap;position:sticky;top:0;background:#F8F9FA";
-  const TD = "padding:7px 6px;font-size:13px;vertical-align:top;border-bottom:1px solid #E8EAED";
-  const chkCell = r => h("td", { style:TD + ";text-align:center" }, [
-    h("input", { type:"checkbox", checked: r.chk === true, style:"width:18px;height:18px", onchange: e => { r.chk = e.target.checked; save(); } })
-  ]);
-  const lines = (a, mono) => a.length ? h("div", null, a.map(x => h("div", { style:"white-space:nowrap;" + (mono ? MONO : ""), text:x }))) : h("span", { style:"color:#9AA0A6", text:"—" });
-  const one = (v, mono) => v ? h("span", { style:mono ? MONO : "", text:v }) : h("span", { style:"color:#9AA0A6", text:"—" });
-  const card = (title, sub, table) => h("div", { style:"background:#FFF;border:1px solid #DADCE0;border-radius:16px;padding:12px 14px;margin-bottom:10px" }, [
-    h("div", { style:"display:flex;align-items:baseline;gap:8px;margin-bottom:8px" }, [
-      h("div", { style:"font-size:15px;font-weight:700", text:title }), h("div", { style:"font-size:12px;color:#5F6368", text:sub })
-    ]),
-    h("div", { style:"overflow-x:auto" }, [ table ])
-  ]);
+  const BADGE = "font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0";
+  const val = t => { const g = /（普通）/.test(t);
+    return h("span", { style:"display:inline-flex;align-items:baseline;gap:4px;margin-right:12px" }, [ h("span", { style:MONO, text: g ? t.replace("（普通）", "") : t }), g ? h("span", { class:"gen-badge", style:BADGE, text:"普通" }) : null ]); };
+  const distTxt = x => (x.note && !/^普通/.test(x.note) ? x.note + " " : "") + x.nominal + " " + fmtTol(x.upper) + "/" + fmtTol(x.lower) + "（" + lLim(x) + "〜" + uLim(x) + "）" + (/^普通/.test(x.note || "") ? "（普通）" : "");
+  const line = (label, vals) => vals.filter(Boolean).length ? h("div", { style:"display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.55" }, [
+    h("span", { style:"flex-shrink:0;width:66px;font-size:11px;color:#5F6368", text:label }),
+    h("div", { style:"min-width:0;flex:1" }, vals.filter(Boolean).map(val))
+  ]) : null;
+  const chk = o => h("input", { type:"checkbox", checked: o.chk === true, style:"width:18px;height:18px;flex-shrink:0;margin:0", onchange: e => { o.chk = e.target.checked; save(); } });
 
-  if (nc.features.length){
-    const cols = [["✓","36px"],["形状",""],["箇所","50px"],["径",""],["深さ",""],["ねじ",""],["面取り・R",""],["位置度",""],["粗さ",""],["備考",""]];
-    inner.appendChild(card("穴・形状", nc.features.length + "件 / " + nc.features.reduce((a,f) => a + f.qty, 0) + "箇所",
-      h("table", { style:"width:100%;border-collapse:collapse" }, [
-        h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
-        h("tbody", null, nc.features.map(f => h("tr", null, [
-          chkCell(f),
-          h("td", { style:TD }, [ h("div", { style:"font-weight:700;white-space:nowrap", text:f.name || "—" }), f.view ? h("div", { style:"font-size:12px;color:#5F6368;white-space:nowrap", text:f.view }) : null, revLine("features", f, "min-width:200px;max-width:300px") ]),
-          h("td", { style:TD + ";text-align:center;font-weight:700;" + MONO, text:String(f.qty) }),
-          h("td", { style:TD }, [ lines(f.dia, true) ]),
-          h("td", { style:TD }, [ lines(f.depth, true) ]),
-          h("td", { style:TD + ";white-space:nowrap" }, [ one(f.thread) ]),
-          h("td", { style:TD }, [ lines(f.chamfer, true) ]),
-          h("td", { style:TD }, [ lines(f.gdt, true) ]),
-          h("td", { style:TD + ";white-space:nowrap" }, [ one(f.rough, true) ]),
-          h("td", { style:TD + ";color:#5F6368" }, [ one(f.note) ])
-        ])))
-      ])));
-  }
-
-  if (nc.dists.length){
-    const cols = [["✓","36px"],["寸法",""],["公差",""],["上限 / 下限",""],["箇所","50px"],["ビュー",""],["備考",""]];
-    inner.appendChild(card("距離（片側・非対称公差）", nc.dists.length + "件",
-      h("table", { style:"width:100%;border-collapse:collapse" }, [
-        h("thead", null, [ h("tr", null, cols.map(c => h("th", { style:TH + (c[1] ? ";width:" + c[1] + ";text-align:center" : ""), text:c[0] }))) ]),
-        h("tbody", null, nc.dists.map(d => h("tr", null, [
-          chkCell(d),
-          h("td", { style:TD }, [ h("div", { style:"font-weight:700;" + MONO, text:String(d.nominal) }), revLine("dists", d, "max-width:300px") ]),
-          h("td", { style:TD + ";white-space:nowrap;color:#0062CC;" + MONO, text:fmtTol(d.upper) + " / " + fmtTol(d.lower) }),
-          h("td", { style:TD + ";white-space:nowrap;" + MONO, text:uLim(d) + " / " + lLim(d) }),
-          h("td", { style:TD + ";text-align:center;" + MONO, text:String(d.qty) }),
-          h("td", { style:TD + ";white-space:nowrap" }, [ one(d.view) ]),
-          h("td", { style:TD + ";color:#5F6368" }, [ one(d.note) ])
-        ])))
-      ])));
-  }
-  const rb = revBox(["穴・形状", "距離"]); if (rb) inner.appendChild(rb);
+  rows.forEach((r, i) => {
+    const o = r.o, has = r.locs.length > 0;
+    const title = r.k === "f" ? (o.name || "—") : ((o.note && !/^普通/.test(o.note)) ? o.note : "距離");
+    const el = h("div", { class:"cam-row", style:"padding:10px 12px;border-bottom:1px solid #E8EAED;" + (has ? "cursor:pointer;" : ""),
+      onclick: e => { if (!has || e.target.closest("input,button")) return; select(i); } }, [
+      h("div", { style:"display:flex;gap:8px;align-items:center;margin-bottom:4px" }, [
+        chk(o),
+        h("span", { style:"font-weight:700;font-size:15px", text:title }),
+        o.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368", text:"×" + o.qty }) : null,
+        h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? (o.view || "") : "位置なし" })
+      ]),
+      revLine(r.k === "f" ? "features" : "dists", o, "margin:0 0 4px 26px"),
+      h("div", { style:"padding-left:26px" }, r.k === "f" ? [
+        line("径", o.dia), line("深さ", o.depth), line("ねじ", [o.thread]), line("面取り・R", o.chamfer),
+        line("位置度", o.gdt), line("粗さ", [o.rough]), line("距離", r.ds.map(distTxt)),
+        o.note ? h("div", { style:"font-size:12px;color:#5F6368;line-height:1.5;margin-top:2px", text:o.note }) : null
+      ] : [ line("距離", [distTxt(o)]) ])
+    ]);
+    if (DRW.sel === i){ el.style.background = "#E1F0FF"; el.style.boxShadow = "inset 4px 0 0 #007AFF"; }
+    rowEls[i] = el; list.appendChild(el);
+  });
+  const rb = revBox(["穴・形状", "距離"]); if (rb){ rb.style.margin = "10px 12px"; list.appendChild(rb); }
 }
 
 function renderReport(body){
