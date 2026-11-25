@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.13.0";
+const VER = "v2.14.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -325,14 +325,48 @@ function ncFromJSON(nc){
   const features = (Array.isArray(nc.features) ? nc.features : []).map(f => ({
     name:str(f.name), view:str(f.view), qty: parseInt(f.qty,10) > 1 ? parseInt(f.qty,10) : 1,
     dia:arr(f.dia), depth:arr(f.depth), thread:str(f.thread), chamfer:arr(f.chamfer),
-    gdt:arr(f.gdt), rough:str(f.rough), note:str(f.note), chk:f.chk === true, locs:locsOf(f.locs)
-  }));
+    gdt:arr(f.gdt), rough:str(f.rough), note:str(f.note), locs:locsOf(f.locs)
+  })).map((x, i) => { const f = nc.features[i];   // chks: values done in CAM, as "field|value text" (an array: safe as stored data)
+    x.chks = Array.isArray(f.chks) ? [...new Set(f.chks.filter(k => typeof k === "string" && k))]
+           : f.chk === true ? ncValues(x).map(([k, t]) => k + "|" + t) : [];   // before v2.14.0 one check meant the whole feature was done
+    return x; });
   const dists = (Array.isArray(nc.dists) ? nc.dists : []).map(d => {
     if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("距離データの形式が不正です (nominal, upper, lower が必要)");
     return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true, locs:locsOf(d.locs) , ...(d.f ? { f:String(d.f) } : {}) };   // f = name of the feature (hole / shape) this distance belongs to
   });
   if (!features.length && !dists.length) throw new Error("ncデータ(features / dists)がありません");
   return { features, dists };
+}
+
+// values of a feature that get their own CAM check: [field, text]
+function ncValues(f){
+  const out = [];
+  ["dia", "depth"].forEach(k => (f[k] || []).forEach(t => out.push([k, t])));
+  if (f.thread) out.push(["thread", f.thread]);
+  ["chamfer", "gdt"].forEach(k => (f[k] || []).forEach(t => out.push([k, t])));
+  if (f.rough) out.push(["rough", f.rough]);
+  return out;
+}
+// re-import: keep the CAM checks of values that did not change (same feature name, same value text / same distance)
+function carryChecks(old, next){
+  if (!old) return next;
+  next.features.forEach(f => { const o = old.features.find(x => x.name === f.name); if (!o) return;
+    ncValues(f).forEach(([k, t]) => { const key = k + "|" + t; if (o.chks.includes(key) && !f.chks.includes(key)) f.chks.push(key); }); });
+  const used = new Set();
+  next.dists.forEach(d => { const o = old.dists.find(x => !used.has(x) && x.chk && x.nominal === d.nominal && x.upper === d.upper && x.lower === d.lower && (x.f || "") === (d.f || "") && (x.note || "") === (d.note || ""));
+    if (o){ d.chk = true; used.add(o); } });
+  return next;
+}
+// target (middle) value of a tolerance written as text: "φ24 R7 −0.020/−0.041", "C1.5 +0.8/0（普通）", "8±0.2", "φ47 P7" → "φ23.9695" … ; none → ""
+function midText(t){
+  const m = String(t).replace(/−/g, "-").match(/^\s*(?:\d+\s*[x×-]\s*)?([φΦRC]?)\s*(\d+(?:\.\d+)?)\s*([A-Za-z]{1,2}\d{1,2})?\s*(?:（[^）]*）|\([^)]*\))?\s*(?:±\s*(\d+(?:\.\d+)?)|([+-]?\d+(?:\.\d+)?)\s*\/\s*([+-]?\d+(?:\.\d+)?))?/);
+  if (!m) return "";
+  const n = parseFloat(m[2]); let u = null, l = null;
+  if (m[4] != null){ u = parseFloat(m[4]); l = -u; }
+  else if (m[5] != null){ u = parseFloat(m[5]); l = parseFloat(m[6]); }
+  else if (m[3]){ const f = lookupFit(m[3], n); if (f){ u = f[0]; l = f[1]; } }
+  if (u == null || !isFinite(u) || !isFinite(l)) return "";
+  return (m[1] === "Φ" ? "φ" : m[1]) + r4(n + (u + l) / 2);
 }
 
 // stored data may come from older/partial records: always read through this
@@ -568,7 +602,7 @@ async function renderList(){
                   const ex = normalizeProject(await Store.getProject(hit.id) || hit);
                   if (nc){
                     if (ncOf(ex) && !confirm((ex.partName || dno) + " のCAMデータを置き換えますか")) return;
-                    ex.nc = nc;
+                    ex.nc = carryChecks(ncOf(ex), nc);
                   }
                   if (drw) ex.drawing = drw;
                   if (rev) ex.rev = rev;
@@ -1289,7 +1323,7 @@ function camList(list, setRows, rowEls, select){
               const raw = JSON.parse(NCTEXT);
               const next = ncFromJSON(raw.nc || raw);
               if (nc && !confirm("現在のCAMデータを置き換えますか")) return;
-              P.nc = next; NCTEXT = ""; SHOWNCIMP = false; save(); renderProject();
+              P.nc = carryChecks(nc, next); NCTEXT = ""; SHOWNCIMP = false; save(); renderProject();
             } catch (err){ msg.textContent = err instanceof SyntaxError ? "JSONの形式が不正です" : err.message; }
           } }),
         h("button", { style:"min-height:44px;padding:0 24px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;color:#5F6368;font-size:14px;font-weight:600", text:"キャンセル",
@@ -1314,40 +1348,51 @@ function camList(list, setRows, rowEls, select){
 
   const BADGE = "font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0";
   const pick = (el, i) => { el.style.cursor = "pointer"; el.addEventListener("click", e => { e.stopPropagation(); select(i); }); };
-  const valEl = (t, locs) => { const g = /（普通）/.test(t);
-    const el = h("span", { class:"cam-val", style:"display:inline-flex;align-items:baseline;gap:4px;margin:0 8px 0 -4px;padding:0 4px;border-radius:6px" }, [ h("span", { style:MONO, text: g ? t.replace("（普通）", "") : t }), g ? h("span", { class:"gen-badge", style:BADGE, text:"普通" }) : null ]);
+  // ck = { on:bool, set(bool) }: this value's CAM check (done) — tapping the box never moves the red box
+  const valEl = (t, locs, ck, mid) => { const g = /（普通）/.test(t);
+    const box = ck ? h("input", { type:"checkbox", class:"cam-chk", checked: ck.on, style:"width:20px;height:20px;flex-shrink:0;margin:0;align-self:center", onclick: e => e.stopPropagation(), onchange: e => { ck.set(e.target.checked); save(); prog(); } }) : null;
+    const el = h("span", { class:"cam-val", style:"display:inline-flex;align-items:baseline;gap:6px;margin:1px 0 1px -4px;padding:1px 4px;border-radius:6px" }, [ box, h("span", { style:MONO, text: g ? t.replace("（普通）", "") : t }), g ? h("span", { class:"gen-badge", style:BADGE, text:"普通" }) : null,
+      mid ? h("span", { class:"cam-mid", style:MONO + ";font-size:12px;color:#5F6368;white-space:nowrap", text:"中央 " + mid }) : null ]);
     if (locs && locs.length){ const i = items.push({ locs }) - 1; rowEls[i] = el; el.__mark = on => { el.style.background = on ? "#D2E3FC" : ""; el.style.boxShadow = on ? "inset 0 0 0 1px #007AFF" : ""; }; pick(el, i); if (DRW.sel === i) el.__mark(true); }
     return el; };
   const distTxt = x => (x.note && !/^普通/.test(x.note) ? x.note + " " : "") + x.nominal + " " + fmtTol(x.upper) + "/" + fmtTol(x.lower) + "（" + lLim(x) + "〜" + uLim(x) + "）" + (/^普通/.test(x.note || "") ? "（普通）" : "");
   const line = (label, vals) => vals.filter(v => v && v.t).length ? h("div", { style:"display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.7" }, [
     h("span", { style:"flex-shrink:0;width:66px;font-size:11px;color:#5F6368", text:label }),
-    h("div", { style:"min-width:0;flex:1" }, vals.filter(v => v && v.t).map(v => valEl(v.t, v.locs)))
+    h("div", { style:"min-width:0;flex:1;display:flex;flex-direction:column;align-items:flex-start" }, vals.filter(v => v && v.t).map(v => valEl(v.t, v.locs, v.ck, v.mid)))
   ]) : null;
-  const chk = o => h("input", { type:"checkbox", checked: o.chk === true, style:"width:18px;height:18px;flex-shrink:0;margin:0", onchange: e => { o.chk = e.target.checked; save(); } });
+  const progs = [];   // card header "済み n/m" — refreshed when a box changes
+  const prog = () => progs.forEach(f => f());
 
   cards.forEach(r => {
     const o = r.o, fl = o.locs || [], all = fl.concat(...r.ds.map(x => x.locs || [])), has = all.length > 0;
     const perVal = r.k === "f" && fl.some(b => b.v);          // this import says which place belongs to which value
     const ci = items.push(r.k === "d" ? { locs:fl } : perVal ? { locs:fl.filter(b => !b.v), focus:all[0] } : { locs:all }) - 1;
-    const vs = (key, arr) => (arr || []).map((t, k) => ({ t, locs: perVal ? fl.filter(b => b.v === key + ":" + k) : null }));
-    const v1 = (key, t) => [{ t, locs: perVal ? fl.filter(b => b.v === key) : null }];
+    if (!Array.isArray(o.chks)) o.chks = [];
+    const fck = (key, t) => ({ get on(){ return o.chks.includes(key + "|" + t); }, set: b => { const k = key + "|" + t; o.chks = o.chks.filter(x => x !== k); if (b) o.chks.push(k); } });
+    const dck = x => ({ get on(){ return x.chk === true; }, set: b => { x.chk = b; } });
+    const vs = (key, arr) => (arr || []).map((t, k) => ({ t, locs: perVal ? fl.filter(b => b.v === key + ":" + k) : null, ck: fck(key, t), mid: /^(dia|depth|chamfer)$/.test(key) ? midText(t) : "" }));
+    const v1 = (key, t) => [{ t, locs: perVal ? fl.filter(b => b.v === key) : null, ck: fck(key, t) }];
+    const cks = r.k === "f" ? ncValues(o).map(([k, t]) => fck(k, t)).concat(r.ds.map(dck)) : [dck(o)];
     const title = r.k === "f" ? (o.name || "—") : ((o.note && !/^普通/.test(o.note)) ? o.note : "距離");
     const el = h("div", { class:"cam-row", style:"padding:10px 12px;border-bottom:1px solid #E8EAED;" + (has ? "cursor:pointer;" : ""),
       onclick: e => { if (!has || e.target.closest("input,button")) return; select(ci); } }, [
       h("div", { style:"display:flex;gap:8px;align-items:center;margin-bottom:4px" }, [
-        chk(o),
         h("span", { style:"font-weight:700;font-size:15px", text:title }),
+        cks.length > 1 ? (() => { const pe = h("span", { class:"cam-prog", style:"font-size:11px;font-weight:700;padding:1px 7px;border-radius:9px;white-space:nowrap" });
+          const f = () => { const n = cks.filter(c => c.on).length, done = n === cks.length; pe.textContent = (done ? "✓ " : "") + "済み " + n + "/" + cks.length;
+            pe.style.background = done ? "#E6F4EA" : "#F1F3F4"; pe.style.color = done ? "#137333" : "#5F6368"; };
+          f(); progs.push(f); return pe; })() : null,
         o.qty > 1 ? h("span", { style:"font-size:11px;font-weight:700;padding:1px 5px;border-radius:6px;background:#F1F3F4;color:#5F6368", text:"×" + o.qty }) : null,
         h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? (o.view || "") : "位置なし" })
       ]),
-      revLine(r.k === "f" ? "features" : "dists", o, "margin:0 0 4px 26px"),
-      h("div", { style:"padding-left:26px" }, r.k === "f" ? [
+      revLine(r.k === "f" ? "features" : "dists", o, "margin:0 0 4px 0"),
+      h("div", { style:"padding-left:0" }, r.k === "f" ? [
         line("径", vs("dia", o.dia)), line("深さ", vs("depth", o.depth)), line("ねじ", v1("thread", o.thread)), line("面取り・R", vs("chamfer", o.chamfer)),
-        line("位置度", vs("gdt", o.gdt)), line("粗さ", v1("rough", o.rough)), line("距離", r.ds.map(x => ({ t:distTxt(x), locs:x.locs || [] }))),
+        line("位置度", vs("gdt", o.gdt)), line("粗さ", v1("rough", o.rough)), line("距離", r.ds.map(x => ({ t:distTxt(x), locs:x.locs || [], ck:dck(x), mid:String(midLim(x)) }))),
         o.note ? (() => { const n = h("div", { class:"cam-val", style:"font-size:12px;color:#5F6368;line-height:1.5;margin:2px 0 0 -4px;padding:0 4px;border-radius:6px", text:o.note }), nl = perVal ? fl.filter(b => b.v === "note") : [];
           if (nl.length){ const i = items.push({ locs:nl }) - 1; rowEls[i] = n; n.__mark = on => { n.style.background = on ? "#D2E3FC" : ""; n.style.boxShadow = on ? "inset 0 0 0 1px #007AFF" : ""; }; pick(n, i); if (DRW.sel === i) n.__mark(true); }
           return n; })() : null
-      ] : [ line("距離", [{ t:distTxt(o) }]) ])
+      ] : [ line("距離", [{ t:distTxt(o), ck:dck(o), mid:String(midLim(o)) }]) ])
     ]);
     el.__mark = on => { el.style.background = on ? "#E1F0FF" : ""; el.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; };
     if (DRW.sel === ci) el.__mark(true);

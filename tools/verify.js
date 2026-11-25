@@ -80,9 +80,9 @@ async function importTests(browser, html, errs) {
   ok('M0 図面のない案件は測定タブに「図面」ボタンを出さない', !(await pg.$('.meas-drw-btn')));
   // NCチェック欄
   await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(300);
-  const boxes = await pg.$$('input[type=checkbox]'); if (boxes[0]) { await boxes[0].check(); await pg.waitForTimeout(700); }
-  const chk = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects'))[0].nc.features[0].chk);
-  ok('2 NCチェック欄が保存される', chk === true);
+  const boxes = await pg.$$('.cam-chk'); if (boxes[0]) { await boxes[0].check(); await pg.waitForTimeout(700); }
+  const chk = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects'))[0].nc.features[0].chks);
+  ok('2 CAMのチェック欄が値ごとに保存される（1つ目の値 φ50 だけ済み）', JSON.stringify(chk) === JSON.stringify(['dia|φ50 -0.067/-0.083']), JSON.stringify(chk));
   const camTx = await pg.evaluate(() => document.body.innerText);
   const tabs = await pg.$$eval('button', b => b.map(x => x.textContent.trim()).filter(t => /^(測定|図面)$|^(CAM|成績書|NC)( |\(|$)/.test(t)));
   ok('T1 タブは「測定｜CAM｜成績書」の3つ（図面タブ・NCタブなし）', tabs.length === 3 && /^測定/.test(tabs[0]) && /^CAM/.test(tabs[1]) && /^成績書/.test(tabs[2]), JSON.stringify(tabs));
@@ -482,9 +482,9 @@ async function genDrawTests(browser, html, errs) {
   ok('K2 取込後はCAMタブが開き、形状のカード1枚＋所属先のない距離のカード1枚', cards.length === 2 && /^小端 二股（溝）/.test(cards[0]) && /2\.3/.test(cards[1]) && !/2\.3/.test(cards[0]), JSON.stringify(cards));
   ok('K3 形状のカードに全公差（径・深さ・面取り・R・位置度・粗さ・距離・注記・個数・図）', ['径', 'φ10.1 +0.1/0', '深さ', '12', '面取り・R', 'C1 +0.8/0', 'R0.5 0/−0.4', '位置度 φ0.1', 'Ra1.6', '距離', '溝幅 20 +0.06/+0.04', '両側', '×2', '正面図'].every(t => cards[0].includes(t)), cards[0]);
   ok('K4 面取り・R の普通公差の値に「普通」の印（2つ）', (await pg.$eval('.cam-row', e => e.querySelectorAll('.gen-badge').length)) === 2);
-  await (await pg.$$('.cam-row input[type=checkbox]'))[1].check(); await pg.waitForTimeout(700);
+  await (await pg.$$('.cam-row >> nth=1 >> .cam-chk'))[0].check(); await pg.waitForTimeout(700);
   p = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'CC-1'));
-  ok('K5 カードのチェック欄が保存される（距離のカードは距離に保存）', p.nc.dists[1].chk === true && !p.nc.features[0].chk, JSON.stringify([p.nc.features[0].chk, p.nc.dists[1].chk]));
+  ok('K5 距離だけのカードのチェック欄は距離に保存（形状の値は済みにならない）', p.nc.dists[1].chk === true && p.nc.features[0].chks.length === 0, JSON.stringify([p.nc.features[0].chks, p.nc.dists[1].chk]));
   await pg.click('.cam-row >> nth=0'); await pg.waitForTimeout(300);
   ok('K6 図面が未紐づけでもカードは選べ、位置なしの表示は出ない（形状＋所属距離の位置を合わせて持つ）', (await pg.$$eval('.cam-row', e => e.filter(x => x.style.background).length)) === 1 && !(await pg.$('.cam-row:has-text("位置なし")')) && (await pg.evaluate(() => /「図面を選ぶ」/.test(document.body.innerText))));
   await pg.close();
@@ -538,6 +538,53 @@ async function valueSelTests(browser, html, errs) {
   return R;
 }
 
+async function camCheckTests(browser, html, errs) {
+  // v2.14.0: a CAM check per value (done), progress per feature, checks survive re-import, target (middle) values
+  const pg = await open(browser, html, 1180, 820, errs, 'camcheck');
+  pg.removeAllListeners('dialog'); pg.on('dialog', d => d.accept());
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const F = { name:'ボア', view:'A', dia:['φ24 R7 −0.020/−0.041', 'φ47 P7', '6xC0.3±0.2'], depth:['8±0.2', '12'], thread:'M10×1.25', chamfer:['C1.5 +0.8/0（普通）', 'R4（TRUE）0/−0.8（4か所）（普通）'], gdt:['⊕φ0.1 A B'], rough:'Rz12.5', note:'注記',
+              locs:[{ p:1, x:0.1, y:0.1, w:0.03, h:0.02, v:'dia:0' }] };
+  const base = { partName:'CHK', drawingNo:'CK-1', nc:{ features:[F, { name:'穴B', dia:['φ5 +0.1/0'] }], dists:[{ nominal:20, upper:0.06, lower:0.04, f:'ボア', note:'溝幅', locs:[{ p:1, x:0.5, y:0.5, w:0.03, h:0.02 }] }, { nominal:3, upper:0, lower:-0.1 }] } };
+  const imp = async j => { if (await pg.$('text=←')) { await pg.click('text=←'); await pg.waitForTimeout(300); } await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(800); };
+  const proj = () => pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'CK-1'));
+  const progs = () => pg.$$eval('.cam-prog', e => e.map(x => x.textContent));
+  await imp(base);
+  const card0 = '.cam-row >> nth=0';
+  const n0 = (await pg.$$(card0 + ' >> .cam-chk')).length;
+  ok('W1 値ごとにチェック欄（径3・深さ2・ねじ・面取り2・位置度・粗さ・形状に入った距離 = 11）、形状名の横に「済み 0/11」', n0 === 11 && (await progs())[0] === '済み 0/11', n0 + ' ' + JSON.stringify(await progs()));
+  ok('W2 値が1つだけのカード（穴B・距離 3）には済み数を出さない', (await progs()).length === 1, JSON.stringify(await progs()));
+  const bx = await pg.$$(card0 + ' >> .cam-chk');
+  await pg.click('.cam-val:has-text("φ24 R7")'); await pg.waitForTimeout(300);
+  const sel0 = await pg.evaluate(() => DRW.sel);
+  await bx[0].check(); await bx[3].check(); await bx[10].check(); await pg.waitForTimeout(700);
+  let p = await proj();
+  ok('W3 チェックは値ごとに保存（φ24 R7・深さ 8・距離 20）、形状名の横は「済み 3/11」', JSON.stringify(p.nc.features[0].chks) === JSON.stringify(['dia|φ24 R7 −0.020/−0.041', 'depth|8±0.2']) && p.nc.dists[0].chk === true && (await progs())[0] === '済み 3/11', JSON.stringify([p.nc.features[0].chks, p.nc.dists[0].chk, await progs()]));
+  ok('W4 チェック欄を押しても選んでいる値（赤枠）は変わらない', await pg.evaluate(() => DRW.sel) === sel0 && sel0 != null);
+  for (const b of await pg.$$(card0 + ' >> .cam-chk')) await b.check();
+  await pg.waitForTimeout(500);
+  const pr = (await progs())[0], col = await pg.$eval('.cam-prog', e => getComputedStyle(e).color);
+  ok('W5 全部チェックすると「✓ 済み 11/11」（緑）', pr === '✓ 済み 11/11' && col === 'rgb(19, 115, 51)', pr + ' ' + col);
+  // re-import: unchanged values keep their check, a changed value loses it
+  const j2 = JSON.parse(JSON.stringify(base)); j2.nc.features[0].chamfer[0] = 'C1.5 +0.5/0（普通）'; j2.nc.dists[0].upper = 0.07;
+  await imp(j2); p = await proj();
+  ok('W6 同じ図番に貼り直してもチェックは残り、書き方の変わった値（C1.5 の公差・距離 20 の上限）だけ外れる', p.nc.features[0].chks.length === 9 && !p.nc.features[0].chks.includes('chamfer|C1.5 +0.5/0（普通）') && p.nc.dists[0].chk !== true && (await progs())[0] === '済み 9/11', JSON.stringify(await progs()));
+  await pg.click('button:text-is("CAMデータ取込")'); await pg.fill('textarea', JSON.stringify({ nc:base.nc })); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700);
+  p = await proj();
+  ok('W7 CAMタブの「CAMデータ取込」で置き換えてもチェックは残る', p.nc.features[0].chks.length === 9 && (await progs())[0] === '済み 9/11', JSON.stringify(await progs()));
+  const mids = await pg.$$eval('.cam-mid', e => e.map(x => x.textContent));
+  const want = ['中央 φ23.9695', '中央 φ46.9705', '中央 C0.3', '中央 8', '中央 C1.9', '中央 R3.6', '中央 20.05', '中央 φ5.05', '中央 2.95'];
+  ok('W8 中央値（数値公差・公差域クラスのJIS計算・±・個数付き・括弧の注記つき・距離）。ねじ・位置度・粗さ・公差のない深さには出さない', JSON.stringify(mids) === JSON.stringify(want), JSON.stringify(mids));
+  // data saved by v2.13.0 or older: one check per feature → all of its values done
+  await pg.evaluate(() => { const a = JSON.parse(localStorage.getItem('_projects')); const q = a.find(p => p.drawingNo === 'CK-1'); q.nc.features.forEach(f => { delete f.chks; }); q.nc.features[1].chk = true; localStorage.setItem('_projects', JSON.stringify(a)); });
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(400); await pg.click('text=CHK'); await pg.waitForTimeout(500); await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(400);
+  const c1b = await pg.$$eval('.cam-row', e => [...e[1].querySelectorAll('.cam-chk')].map(x => x.checked));
+  ok('W9 v2.13.0 までの形状ごとのチェックは、その形状の値が全部済みとして引き継ぐ', c1b.length === 1 && c1b[0] === true, JSON.stringify(c1b));
+  await pg.close();
+  return R;
+}
+
 (async () => {
   const browser = await chromium.launch(); const errs = [];
   const a = await shots(browser, baseHtml, 'before', errs), b = await shots(browser, newHtml, 'after', errs);
@@ -547,6 +594,8 @@ async function valueSelTests(browser, html, errs) {
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
   console.log('== CAMタブの普通公差・カードの試験（改修後）');
   for (const r of await genDrawTests(browser, newHtml, errs)) console.log(r);
+  console.log('== CAMの値ごとのチェック・中央値の試験（改修後）');
+  for (const r of await camCheckTests(browser, newHtml, errs)) console.log(r);
   console.log('== CAMカードの値ごとの選択の試験（改修後）');
   for (const r of await valueSelTests(browser, newHtml, errs)) console.log(r);
   console.log('== 普通公差の印の試験（改修後）');
