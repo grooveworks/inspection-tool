@@ -139,12 +139,12 @@ async function drawingTests(browser, html, errs) {
   ok('N2 CAMタブ（図面つき）にNCの表示が残っていない', /CAMデータ取込/.test(drTx) && !/(^|[^A-Za-z])NC([^A-Za-z]|$)/m.test(drTx), (drTx.match(/.{0,10}NC.{0,10}/) || [''])[0]);
   ok('G5 普通公差のない案件：図面タブに規格の帯・「普通」の印・点線枠を出さない', !(await pg.$('.gen-std')) && !(await pg.$('.gen-badge')) && (await pg.$$('.drw-gen')).length === 0 && !/普通/.test(drTx));
   // same page → the drawing is not redrawn, only the box moves; the list is not rebuilt
-  await pg.evaluate(() => { document.querySelector('canvas').__mark = 1; document.querySelector('.cam-row').__mark = 1; });
+  await pg.evaluate(() => { document.querySelector('canvas').__probe = 1; document.querySelector('.cam-row').__probe = 1; });
   const box = () => pg.evaluate(() => { const e = document.querySelector('.drw-main'); return e ? Math.round(parseFloat(e.style.left)) : null; });
   const b1 = await box();
   const t0 = Date.now(); await pg.click('.cam-row >> nth=1'); await pg.waitForFunction(b => { const e = document.querySelector('.drw-main'); return e && Math.round(parseFloat(e.style.left)) !== b; }, b1, { timeout:5000 }).catch(() => {});
   const tSame = Date.now() - t0;
-  const same = await pg.evaluate(() => ({ canvas: document.querySelector('canvas').__mark === 1, list: document.querySelector('.cam-row').__mark === 1, boxes: document.querySelectorAll('.drw-hl').length, sel: [...document.querySelectorAll('.cam-row')].filter(e => e.style.background).length }));
+  const same = await pg.evaluate(() => ({ canvas: document.querySelector('canvas').__probe === 1, list: document.querySelector('.cam-row').__probe === 1, boxes: document.querySelectorAll('.drw-hl').length, sel: [...document.querySelectorAll('.cam-row')].filter(e => e.style.background).length }));
   ok('D11 同じページの行タップ → 図面は描き直さず枠だけ移動・一覧も作り直さない', same.canvas && same.list && same.boxes === 1 && same.sel === 1 && (await box()) !== b1, JSON.stringify(same) + ' ' + tSame + 'ms');
   const w0 = await pg.evaluate(() => document.querySelector('canvas').width);
   await pg.click('button:text-is("＋")'); await pg.waitForFunction(w => { const c = document.querySelector('canvas'); return c && c.width > w; }, w0, { timeout:10000 }).catch(() => {});
@@ -491,6 +491,53 @@ async function genDrawTests(browser, html, errs) {
   return R;
 }
 
+async function valueSelTests(browser, html, errs) {
+  // v2.13.0: each value in a CAM card is tapped on its own and shows only its own place (locs[].v); the card name only moves the drawing
+  const pg = await open(browser, html, 1180, 820, errs, 'valsel');
+  const st = path.join(__dirname, 'stubs'), fx = path.join(__dirname, 'fixtures');
+  await pg.route(/accounts\.google\.com\/gsi\/client/, r => r.fulfill({ path:path.join(st,'gsi.js'), contentType:'application/javascript' }));
+  await pg.route(/apis\.google\.com\/js\/api\.js/, r => r.fulfill({ path:path.join(st,'picker.js'), contentType:'application/javascript' }));
+  await pg.route(/googleapis\.com\/drive\/v3\/files/, r => r.fulfill({ path:path.join(fx,'test_drawing.pdf'), contentType:'application/pdf' }));
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const B = (p, x, y, v) => Object.assign({ p, x, y, w:0.04, h:0.02 }, v ? { v } : {});
+  const j = { partName:'VALSEL', drawingNo:'VS-1',
+    nc:{ features:[{ name:'ねじ穴', view:'V', qty:2, dia:['φ16 0/−0.6（普通）'], thread:'M10', chamfer:['C1.5 +0.8/0（普通）','R2 0/−0.8（普通）'], gdt:['⊕φ0.1 A B'], note:'注記X',
+                     locs:[B(2,0.5,0.5,'dia:0'), B(1,0.1,0.1,'thread'), B(1,0.3,0.3,'chamfer:0'), B(1,0.32,0.6,'chamfer:0'), B(1,0.6,0.2,'chamfer:1'), B(1,0.7,0.7,'note')] },
+                   { name:'旧形状', view:'W', dia:['φ5'], chamfer:['C1'], locs:[B(1,0.2,0.4), B(1,0.25,0.45), B(1,0.3,0.5)] }],
+         dists:[{ nominal:20, upper:0.06, lower:0.04, f:'ねじ穴', note:'溝幅', locs:[B(1,0.4,0.8)] }] },
+    drawing:{ fileId:'VFILE', name:'VS-1.pdf' } };
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700);
+  const p = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'VS-1'));
+  ok('V1 取込で位置の「どの値か」(v) が保存される（v のない位置には付けない）', p.nc.features[0].locs.map(b => b.v).join() === 'dia:0,thread,chamfer:0,chamfer:0,chamfer:1,note' && p.nc.features[1].locs.every(b => !('v' in b)), JSON.stringify(p.nc.features[0].locs.map(b => b.v)));
+  await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(300);
+  const op = await pg.$('button:text-is("図面を開く")'); if (op) await op.click(); await pg.waitForSelector('canvas', { timeout:10000 }).catch(() => {}); await pg.waitForTimeout(500);
+  const st0 = () => pg.evaluate(() => ({ boxes:document.querySelectorAll('.drw-hl').length, lbl:(document.body.innerText.match(/\d+ \/ \d+ ページ/) || [''])[0],
+    vals:[...document.querySelectorAll('.cam-val')].filter(e => e.style.background).map(e => e.textContent), cards:[...document.querySelectorAll('.cam-row')].filter(e => e.style.background).length }));
+  const tap = async sel => { await pg.click(sel); await pg.waitForTimeout(1500); return st0(); };
+  let s = await tap('.cam-row:has-text("ねじ穴") span:text-is("ねじ穴")');
+  ok('V2 形状の名前をタップ → 赤枠は出さず、カードが選ばれ、図面はその形状の場所（2ページ目）へ移る', s.boxes === 0 && s.cards === 1 && s.vals.length === 0 && /^2 \//.test(s.lbl), JSON.stringify(s));
+  s = await tap('.cam-val:has-text("C1.5 +0.8/0")');
+  ok('V3 値（C1.5）をタップ → その値の場所だけ赤枠（同じ値の2か所）・1ページ目へ・その値だけ青・カードは青にしない', s.boxes === 2 && /^1 \//.test(s.lbl) && s.vals.length === 1 && /^C1\.5/.test(s.vals[0]) && s.cards === 0, JSON.stringify(s));
+  s = await tap('.cam-val:has-text("R2 0/−0.8")');
+  ok('V4 別の値（R2）をタップ → 赤枠はその1か所だけに替わり、前の値の青は消える', s.boxes === 1 && s.vals.length === 1 && /^R2/.test(s.vals[0]), JSON.stringify(s));
+  s = await tap('.cam-val:has-text("溝幅 20")');
+  ok('V5 形状に入った距離（f）をタップ → その距離の場所だけ赤枠', s.boxes === 1 && s.vals.length === 1 && /溝幅 20/.test(s.vals[0]), JSON.stringify(s));
+  s = await tap('.cam-val:has-text("注記X")');
+  ok('V6 注記に位置があればタップでその場所だけ赤枠', s.boxes === 1 && s.vals.length === 1 && s.vals[0] === '注記X', JSON.stringify(s));
+  const cur = await pg.$eval('.cam-val:has-text("⊕φ0.1 A B")', e => e.style.cursor);
+  s = await tap('.cam-val:has-text("⊕φ0.1 A B")');
+  ok('V7 位置のない値は値としては選べない（押すとカードが選ばれるだけ・赤枠なし）', cur !== 'pointer' && s.boxes === 0 && s.cards === 1 && s.vals.length === 0, cur + ' ' + JSON.stringify(s));
+  s = await tap('.cam-row:has-text("旧形状") span:text-is("旧形状")');
+  ok('V8 位置に値の印がない古いデータ → カードのタップで従来どおりその形状の全部の場所に赤枠', s.boxes === 3 && s.cards === 1, JSON.stringify(s));
+  await tap('.cam-val:has-text("R2 0/−0.8")');
+  await pg.click('button:text-is("測定")'); await pg.waitForTimeout(300); await pg.click('button:text-matches("^CAM")'); await pg.waitForSelector('.drw-hl', { timeout:10000 }).catch(() => {}); await pg.waitForTimeout(500);
+  s = await st0();
+  ok('V9 他のタブへ行って戻っても、選んだ値と赤枠はそのまま', s.boxes === 1 && s.vals.length === 1 && /^R2/.test(s.vals[0]), JSON.stringify(s));
+  await pg.close();
+  return R;
+}
+
 (async () => {
   const browser = await chromium.launch(); const errs = [];
   const a = await shots(browser, baseHtml, 'before', errs), b = await shots(browser, newHtml, 'after', errs);
@@ -500,6 +547,8 @@ async function genDrawTests(browser, html, errs) {
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
   console.log('== CAMタブの普通公差・カードの試験（改修後）');
   for (const r of await genDrawTests(browser, newHtml, errs)) console.log(r);
+  console.log('== CAMカードの値ごとの選択の試験（改修後）');
+  for (const r of await valueSelTests(browser, newHtml, errs)) console.log(r);
   console.log('== 普通公差の印の試験（改修後）');
   for (const r of await genTests(browser, newHtml, errs)) console.log(r);
   console.log('== 図面試験（CAMタブ・測定タブ・縦横）（改修後）');

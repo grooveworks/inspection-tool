@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.12.0";
+const VER = "v2.13.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -259,7 +259,7 @@ function parseImport(raw){
 function locsOf(v){
   if (!Array.isArray(v)) return [];
   return v.filter(b => b && [b.p,b.x,b.y,b.w,b.h].every(n => typeof n === "number" && isFinite(n)) && b.p >= 1)
-          .map(b => b.g ? { p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h, g:1 } : { p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h });   // g:1 = place whose tolerance comes from the maker's general-tolerance standard
+          .map(b => Object.assign({ p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h }, b.g ? { g:1 } : {}, typeof b.v === "string" && b.v ? { v:b.v } : {}));   // g:1 = place whose tolerance comes from the maker's general-tolerance standard; v = which value of the feature it belongs to ("dia:0", "thread", …)
 }
 // linked drawing file on Google Drive: {fileId, name} — anything else → null
 function drawingOf(v){
@@ -1140,7 +1140,7 @@ function renderDrawing(body, mode){
   const rowEls = [];
   const mark = (el, on) => { if (!el) return;
     if (meas){ const c = el.querySelector("td"); if (c) c.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; el.querySelectorAll("td").forEach(td => td.style.outline = ""); el.style.outline = on ? "2px solid #007AFF" : ""; el.style.outlineOffset = "-2px"; }
-    else { el.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; el.style.background = on ? "#E1F0FF" : ""; } };
+    else if (el.__mark) el.__mark(on); };
   const select = i => { if (DRW.sel != null) mark(rowEls[DRW.sel], false); DRW.sel = i; mark(rowEls[i], true); if (open && DRW.pdf && d && DRW.fileId === d.fileId) show(); };   // drawing not loaded yet → just mark the row
 
   if (meas){
@@ -1228,8 +1228,8 @@ function renderDrawing(body, mode){
 
   // draw the page only when page / zoom / file changed (cached in DRW.cv); otherwise just move the boxes
   function show(focus){
-    const sel = DRW.sel != null ? rows[DRW.sel] : null, locs = sel ? sel.locs : [];
-    const pno = locs.length ? Math.min(locs[0].p, DRW.pdf.numPages) : (DRW.page || 1);
+    const sel = DRW.sel != null ? rows[DRW.sel] : null, locs = sel ? sel.locs : [], fc = sel && !locs.length ? sel.focus : null;   // focus: move there without a red box
+    const pno = locs.length ? Math.min(locs[0].p, DRW.pdf.numPages) : fc ? Math.min(fc.p, DRW.pdf.numPages) : (DRW.page || 1);
     pageLbl.textContent = pno + " / " + DRW.pdf.numPages + " ページ";
     const token = DRW.tok = (DRW.tok || 0) + 1;
     (async () => {
@@ -1258,7 +1258,7 @@ function renderDrawing(body, mode){
       locs.filter(b => b.p === pno).forEach((b, k) => page.appendChild(h("div", { class: k === 0 ? "drw-hl drw-main" : "drw-hl",
         style:"left:" + (b.x * cv.w - pad) + "px;top:" + (b.y * cv.h - pad) + "px;width:" + (b.w * cv.w + pad * 2) + "px;height:" + (b.h * cv.h + pad * 2) + "px" })));
       if (focus) view.scrollTo(focus.fx * cv.w + page.offsetLeft - focus.mx, focus.fy * cv.h + page.offsetTop - focus.my);
-      else if (locs.length){ const b = locs[0]; view.scrollTo((b.x + b.w / 2) * cv.w - view.clientWidth / 2, (b.y + b.h / 2) * cv.h - view.clientHeight / 2); }
+      else if (locs.length || fc){ const b = locs[0] || fc; view.scrollTo((b.x + b.w / 2) * cv.w - view.clientWidth / 2, (b.y + b.h / 2) * cv.h - view.clientHeight / 2); }
       detailSoon(0);
     })().catch(e => { DRW.msg = "表示に失敗しました: " + e.message; status.textContent = DRW.msg; });
   }
@@ -1306,25 +1306,34 @@ function camList(list, setRows, rowEls, select){
   // distances with f (feature name) are shown inside that feature; the rest get their own card
   const own = new Map(), loose = [];
   nc.dists.forEach(x => { const f = x.f ? nc.features.find(y => y.name === x.f) : null; if (f){ if (!own.has(f)) own.set(f, []); own.get(f).push(x); } else loose.push(x); });
-  const rows = nc.features.map(f => { const ds = own.get(f) || []; return { k:"f", o:f, ds, locs:(f.locs || []).concat(...ds.map(x => x.locs || [])) }; })
-    .concat(loose.map(x => ({ k:"d", o:x, ds:[], locs:x.locs || [] })));
-  setRows(rows);
+  const cards = nc.features.map(f => ({ k:"f", o:f, ds:own.get(f) || [] })).concat(loose.map(x => ({ k:"d", o:x, ds:[] })));
+  // selectable items: a value in a card shows only its own place on the drawing (locs with v = "dia:0", "thread", …);
+  // tapping the card itself just moves the drawing there. Data without v (older imports): the card shows all its places as before.
+  const items = [];
+  setRows(items);
 
   const BADGE = "font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0";
-  const val = t => { const g = /（普通）/.test(t);
-    return h("span", { style:"display:inline-flex;align-items:baseline;gap:4px;margin-right:12px" }, [ h("span", { style:MONO, text: g ? t.replace("（普通）", "") : t }), g ? h("span", { class:"gen-badge", style:BADGE, text:"普通" }) : null ]); };
+  const pick = (el, i) => { el.style.cursor = "pointer"; el.addEventListener("click", e => { e.stopPropagation(); select(i); }); };
+  const valEl = (t, locs) => { const g = /（普通）/.test(t);
+    const el = h("span", { class:"cam-val", style:"display:inline-flex;align-items:baseline;gap:4px;margin:0 8px 0 -4px;padding:0 4px;border-radius:6px" }, [ h("span", { style:MONO, text: g ? t.replace("（普通）", "") : t }), g ? h("span", { class:"gen-badge", style:BADGE, text:"普通" }) : null ]);
+    if (locs && locs.length){ const i = items.push({ locs }) - 1; rowEls[i] = el; el.__mark = on => { el.style.background = on ? "#D2E3FC" : ""; el.style.boxShadow = on ? "inset 0 0 0 1px #007AFF" : ""; }; pick(el, i); if (DRW.sel === i) el.__mark(true); }
+    return el; };
   const distTxt = x => (x.note && !/^普通/.test(x.note) ? x.note + " " : "") + x.nominal + " " + fmtTol(x.upper) + "/" + fmtTol(x.lower) + "（" + lLim(x) + "〜" + uLim(x) + "）" + (/^普通/.test(x.note || "") ? "（普通）" : "");
-  const line = (label, vals) => vals.filter(Boolean).length ? h("div", { style:"display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.55" }, [
+  const line = (label, vals) => vals.filter(v => v && v.t).length ? h("div", { style:"display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.7" }, [
     h("span", { style:"flex-shrink:0;width:66px;font-size:11px;color:#5F6368", text:label }),
-    h("div", { style:"min-width:0;flex:1" }, vals.filter(Boolean).map(val))
+    h("div", { style:"min-width:0;flex:1" }, vals.filter(v => v && v.t).map(v => valEl(v.t, v.locs)))
   ]) : null;
   const chk = o => h("input", { type:"checkbox", checked: o.chk === true, style:"width:18px;height:18px;flex-shrink:0;margin:0", onchange: e => { o.chk = e.target.checked; save(); } });
 
-  rows.forEach((r, i) => {
-    const o = r.o, has = r.locs.length > 0;
+  cards.forEach(r => {
+    const o = r.o, fl = o.locs || [], all = fl.concat(...r.ds.map(x => x.locs || [])), has = all.length > 0;
+    const perVal = r.k === "f" && fl.some(b => b.v);          // this import says which place belongs to which value
+    const ci = items.push(r.k === "d" ? { locs:fl } : perVal ? { locs:fl.filter(b => !b.v), focus:all[0] } : { locs:all }) - 1;
+    const vs = (key, arr) => (arr || []).map((t, k) => ({ t, locs: perVal ? fl.filter(b => b.v === key + ":" + k) : null }));
+    const v1 = (key, t) => [{ t, locs: perVal ? fl.filter(b => b.v === key) : null }];
     const title = r.k === "f" ? (o.name || "—") : ((o.note && !/^普通/.test(o.note)) ? o.note : "距離");
     const el = h("div", { class:"cam-row", style:"padding:10px 12px;border-bottom:1px solid #E8EAED;" + (has ? "cursor:pointer;" : ""),
-      onclick: e => { if (!has || e.target.closest("input,button")) return; select(i); } }, [
+      onclick: e => { if (!has || e.target.closest("input,button")) return; select(ci); } }, [
       h("div", { style:"display:flex;gap:8px;align-items:center;margin-bottom:4px" }, [
         chk(o),
         h("span", { style:"font-weight:700;font-size:15px", text:title }),
@@ -1333,13 +1342,16 @@ function camList(list, setRows, rowEls, select){
       ]),
       revLine(r.k === "f" ? "features" : "dists", o, "margin:0 0 4px 26px"),
       h("div", { style:"padding-left:26px" }, r.k === "f" ? [
-        line("径", o.dia), line("深さ", o.depth), line("ねじ", [o.thread]), line("面取り・R", o.chamfer),
-        line("位置度", o.gdt), line("粗さ", [o.rough]), line("距離", r.ds.map(distTxt)),
-        o.note ? h("div", { style:"font-size:12px;color:#5F6368;line-height:1.5;margin-top:2px", text:o.note }) : null
-      ] : [ line("距離", [distTxt(o)]) ])
+        line("径", vs("dia", o.dia)), line("深さ", vs("depth", o.depth)), line("ねじ", v1("thread", o.thread)), line("面取り・R", vs("chamfer", o.chamfer)),
+        line("位置度", vs("gdt", o.gdt)), line("粗さ", v1("rough", o.rough)), line("距離", r.ds.map(x => ({ t:distTxt(x), locs:x.locs || [] }))),
+        o.note ? (() => { const n = h("div", { class:"cam-val", style:"font-size:12px;color:#5F6368;line-height:1.5;margin:2px 0 0 -4px;padding:0 4px;border-radius:6px", text:o.note }), nl = perVal ? fl.filter(b => b.v === "note") : [];
+          if (nl.length){ const i = items.push({ locs:nl }) - 1; rowEls[i] = n; n.__mark = on => { n.style.background = on ? "#D2E3FC" : ""; n.style.boxShadow = on ? "inset 0 0 0 1px #007AFF" : ""; }; pick(n, i); if (DRW.sel === i) n.__mark(true); }
+          return n; })() : null
+      ] : [ line("距離", [{ t:distTxt(o) }]) ])
     ]);
-    if (DRW.sel === i){ el.style.background = "#E1F0FF"; el.style.boxShadow = "inset 4px 0 0 #007AFF"; }
-    rowEls[i] = el; list.appendChild(el);
+    el.__mark = on => { el.style.background = on ? "#E1F0FF" : ""; el.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; };
+    if (DRW.sel === ci) el.__mark(true);
+    rowEls[ci] = el; list.appendChild(el);
   });
   const rb = revBox(["穴・形状", "距離"]); if (rb){ rb.style.margin = "10px 12px"; list.appendChild(rb); }
 }
