@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.10.0";
+const VER = "v2.11.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -259,7 +259,7 @@ function parseImport(raw){
 function locsOf(v){
   if (!Array.isArray(v)) return [];
   return v.filter(b => b && [b.p,b.x,b.y,b.w,b.h].every(n => typeof n === "number" && isFinite(n)) && b.p >= 1)
-          .map(b => ({ p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h }));
+          .map(b => b.g ? { p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h, g:1 } : { p:Math.round(b.p), x:b.x, y:b.y, w:b.w, h:b.h });   // g:1 = place whose tolerance comes from the maker's general-tolerance standard
 }
 // linked drawing file on Google Drive: {fileId, name} — anything else → null
 function drawingOf(v){
@@ -555,6 +555,7 @@ async function renderList(){
               const nc = raw.nc ? ncFromJSON(raw.nc) : null;
               const drw = drawingOf(raw.drawing);
               const rev = raw.rev ? revOf(raw.rev) : null;
+              const pgen = typeof raw.gen === "string" ? raw.gen.trim() : "";   // project-level general-tolerance standard, e.g. "HES D 0001-08 2級"
               if (raw.rev && !rev) throw new Error("改訂データ(rev)の形式が不正です");
               if (!hasDims && !nc && !drw && !rev) throw new Error("寸法データ(dims)またはCAMデータ(nc)がありません");
               const dno = String(raw.drawingNo || "").trim();
@@ -571,6 +572,7 @@ async function renderList(){
                   }
                   if (drw) ex.drawing = drw;
                   if (rev) ex.rev = rev;
+                  if (pgen) ex.gen = pgen;
                   if (hasDims){
                     const used = new Set();
                     raw.dims.forEach(r => {
@@ -593,6 +595,7 @@ async function renderList(){
               if (nc) p.nc = nc;
               if (drw) p.drawing = drw;
               if (rev) p.rev = rev;
+              if (pgen) p.gen = pgen;
               normalizeProject(p);
               await Store.saveProject(p);
               IMPTEXT = ""; SHOWIMP = false;
@@ -1090,11 +1093,12 @@ async function loadDrawing(fileId){
 function drawRows(){
   const R = [], f = v => fmtTol(v);
   const rv = (g, x) => { const i = revFind(g, x); return i ? revText(i) : ""; };
-  P.dims.forEach(d => R.push({ g:"測定", n:d.name, t:f(d.upper) + " / " + f(d.lower), v:"", locs:d.locs || [], rv:rv("dims", d) }));
+  const gv = x => [].concat(x.dia || [], x.depth || [], x.chamfer || []).filter(t => /（普通）/.test(t)).map(t => t.replace("（普通）", ""));   // general-tolerance values of a CAM row
+  P.dims.forEach(d => R.push({ g:"測定", n:d.name, t:f(d.upper) + " / " + f(d.lower), v:"", locs:d.locs || [], rv:rv("dims", d), gen:!!d.gen, gl:[] }));
   const nc = ncOf(P);
   if (nc){
-    nc.features.forEach(x => R.push({ g:"CAM 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [], rv:rv("features", x) }));
-    nc.dists.forEach(x => R.push({ g:"CAM 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [], rv:rv("dists", x) }));
+    nc.features.forEach(x => { const l = gv(x); R.push({ g:"CAM 穴・形状", n:x.name, t:x.dia[0] || "", v:x.view, locs:x.locs || [], rv:rv("features", x), gen:l.length > 0, gl:l }); });
+    nc.dists.forEach(x => R.push({ g:"CAM 距離", n:String(x.nominal), t:f(x.upper) + " / " + f(x.lower), v:x.view, locs:x.locs || [], rv:rv("dists", x), gen:/^普通/.test(x.note || ""), gl:[] }));
   }
   return R;
 }
@@ -1114,6 +1118,9 @@ function renderDrawing(body){
   list.appendChild(h("div", { style:"padding:10px 12px;border-bottom:1px solid #E8EAED;background:#F8F9FA" }, [
     h("div", { style:"font-size:12px;color:#5F6368", text:"図面（Google Drive）" }),
     h("div", { style:"font-size:13px;font-weight:600;word-break:break-all;margin-top:2px", text: d && d.name ? d.name : "未設定" }),
+    (() => { const g = P.gen || [...new Set(P.dims.map(x => x.gen).filter(Boolean))].join("・");
+      return g ? h("div", { class:"gen-std", style:"display:flex;gap:6px;align-items:center;margin-top:8px;padding:6px 8px;border:1px solid #9AA0A6;border-radius:8px;background:#FFF;font-size:12px;font-weight:700;color:#3C4043" },
+        [ h("span", { style:"font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0", text:"普通" }), h("span", { text:"普通公差 " + g + " 適用" }) ]) : null; })(),
     h("div", { style:"display:flex;gap:8px;margin-top:8px" }, [
       h("button", { style:"height:36px;padding:0 14px;border:1px solid #DADCE0;border-radius:10px;background:#FFF;font-size:13px;font-weight:600", text: d ? "図面を変更" : "図面を選ぶ",
         onclick: async () => {
@@ -1133,13 +1140,15 @@ function renderDrawing(body){
   rows.forEach((r, i) => {
     if (r.g !== last){ last = r.g; list.appendChild(h("div", { style:"font-size:12px;color:#5F6368;padding:8px 12px 4px;background:#F8F9FA;border-bottom:1px solid #E8EAED;position:sticky;top:0", text:r.g })); }
     const on = DRW.sel === i, has = r.locs.length > 0;
-    const el = h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (r.rv ? "flex-wrap:wrap;" : "") + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
+    const el = h("div", { style:"padding:9px 12px;border-bottom:1px solid #F1F3F4;display:flex;gap:8px;align-items:baseline;" + (r.rv || r.gl.length ? "flex-wrap:wrap;" : "") + (has ? "cursor:pointer;" : "opacity:.45;") + (on ? "background:#E1F0FF" : ""),
       onclick: () => { if (!has) return;
         if (DRW.sel != null && rowEls[DRW.sel]) rowEls[DRW.sel].style.background = "";
         DRW.sel = i; el.style.background = "#E1F0FF"; show(); } }, [
       h("span", { style:"font-weight:700;font-size:14px;white-space:nowrap", text:r.n }),
+      r.gen ? h("span", { class:"gen-badge", style:"font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368;flex-shrink:0", text:"普通" }) : null,
       h("span", { style:"font-size:12px;color:#0062CC;white-space:nowrap;" + MONO, text:r.t }),
       h("span", { style:"font-size:11px;color:#5F6368;margin-left:auto;white-space:nowrap", text: has ? r.v : "位置なし" }),
+      r.gl.length ? h("div", { class:"gen-vals", style:"flex-basis:100%;font-size:12px;line-height:1.4;color:#5F6368;" + MONO, text:"普通: " + r.gl.join("、") }) : null,
       r.rv ? h("div", { style:"flex-basis:100%;font-size:11px;font-weight:700;line-height:1.3;color:" + REV_COLOR, text:r.rv }) : null
     ]);
     rowEls[i] = el; list.appendChild(el);
@@ -1234,7 +1243,10 @@ function renderDrawing(body){
       DRW.page = pno;
       page.innerHTML = ""; page.style.transform = ""; page.style.width = cv.w + "px"; page.appendChild(cv.canvas);
       dropDetail();
-      const pad = 6;
+      const pad = 6, seen = new Set();
+      rows.forEach(r => r.locs.forEach(b => { const k = [b.p, b.x, b.y, b.w, b.h].join();
+        if (!b.g || b.p !== pno || seen.has(k)) return; seen.add(k);
+        page.appendChild(h("div", { class:"drw-gen", style:"position:absolute;pointer-events:none;border:2px dashed #E37400;border-radius:4px;left:" + (b.x * cv.w - 4) + "px;top:" + (b.y * cv.h - 4) + "px;width:" + (b.w * cv.w + 8) + "px;height:" + (b.h * cv.h + 8) + "px" })); }));
       locs.filter(b => b.p === pno).forEach((b, k) => page.appendChild(h("div", { class: k === 0 ? "drw-hl drw-main" : "drw-hl",
         style:"left:" + (b.x * cv.w - pad) + "px;top:" + (b.y * cv.h - pad) + "px;width:" + (b.w * cv.w + pad * 2) + "px;height:" + (b.h * cv.h + pad * 2) + "px" })));
       if (focus) view.scrollTo(focus.fx * cv.w + page.offsetLeft - focus.mx, focus.fy * cv.h + page.offsetTop - focus.my);

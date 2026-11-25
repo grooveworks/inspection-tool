@@ -132,6 +132,7 @@ async function drawingTests(browser, html, errs) {
   ok('D4 行タップ → 該当ページへ移動して枠が出る', /^2 \//.test(lbl) && (await pg.$$('.drw-hl')).length === 1, lbl);
   const drTx = await pg.evaluate(() => document.body.innerText);
   ok('N2 図面タブの区分名がCAM（CAM 穴・形状／CAM 距離）・NCの表示が残っていない', /CAM 穴・形状/.test(drTx) && /CAM 距離/.test(drTx) && !/(^|[^A-Za-z])NC([^A-Za-z]|$)/m.test(drTx), (drTx.match(/.{0,10}NC.{0,10}/) || [''])[0]);
+  ok('G5 普通公差のない案件：図面タブに規格の帯・「普通」の印・点線枠を出さない', !(await pg.$('.gen-std')) && !(await pg.$('.gen-badge')) && (await pg.$$('.drw-gen')).length === 0 && !/普通/.test(drTx));
   // same page → the drawing is not redrawn, only the box moves; the list is not rebuilt
   const rowSel = t => 'div[style*="cursor: pointer"]:has(span:text-is("' + t + '"))';
   await pg.click(rowSel('穴A')); await pg.waitForTimeout(1500);
@@ -395,6 +396,50 @@ async function genTests(browser, html, errs) {
   return R;
 }
 
+async function genDrawTests(browser, html, errs) {
+  // drawing tab: project-level standard band, "普通" badges / values on rows, always-on dashed frames for locs with g:1
+  const pg = await open(browser, html, 1180, 820, errs, 'gendraw');
+  const st = path.join(__dirname, 'stubs'), fx = path.join(__dirname, 'fixtures');
+  await pg.route(/accounts\.google\.com\/gsi\/client/, r => r.fulfill({ path:path.join(st,'gsi.js'), contentType:'application/javascript' }));
+  await pg.route(/apis\.google\.com\/js\/api\.js/, r => r.fulfill({ path:path.join(st,'picker.js'), contentType:'application/javascript' }));
+  await pg.route(/googleapis\.com\/drive\/v3\/files/, r => r.fulfill({ path:path.join(fx,'test_drawing.pdf'), contentType:'application/pdf' }));
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const S = 'HES D 0001-08 2級', b1 = {p:1,x:0.1,y:0.1,w:0.05,h:0.03}, g1 = {p:1,x:0.3,y:0.3,w:0.04,h:0.02,g:1}, g2 = {p:1,x:0.5,y:0.2,w:0.04,h:0.02,g:1}, g3 = {p:2,x:0.5,y:0.5,w:0.04,h:0.02,g:1};
+  const j = { partName:'GENDRAW', drawingNo:'GD-1', gen:S,
+    dims:[{ name:'φ36', nominal:36, upper:0, lower:-0.6, type:'軸', gen:S, locs:[g1] }, { name:'φ24', tClass:'R7', nominal:24, upper:-0.02, lower:-0.041, type:'穴', locs:[b1] }],
+    nc:{ features:[{ name:'大端ボア', view:'F-F', dia:['φ24 R7 −0.020/−0.041','φ36 0/−0.6（普通）（ボス外径）'], chamfer:['C1.5 +0.8/0（普通）'], locs:[b1, g1, g2] },
+                   { name:'刻印', view:'上側面図', note:'V26C-H', locs:[b1] }],
+         dists:[{ nominal:36.2, upper:0.3, lower:-0.3, view:'F-F', note:'普通 HES D0001 2級', locs:[g3] }, { nominal:20, upper:0.06, lower:0.04, view:'F-F', note:'溝幅', locs:[b1] }] },
+    drawing:{ fileId:'GENFILE', name:'GD-1_GENDRAW.pdf' } };
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(600);
+  const sp = () => pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'GD-1'));
+  let p = await sp();
+  ok('G6 取込で案件の規格（gen）と位置の普通公差フラグ（g:1）が保存される', p.gen === S && p.nc.features[0].locs[1].g === 1 && !('g' in p.nc.features[0].locs[0]) && p.dims[0].locs[0].g === 1 && p.nc.dists[0].locs[0].g === 1, JSON.stringify([p.gen, p.nc.features[0].locs]));
+  await pg.click('button:text-is("図面")'); await pg.waitForTimeout(300);
+  const op = await pg.$('button:text-is("図面を開く")'); if (op) await op.click(); await pg.waitForTimeout(3000);
+  const band = await pg.$eval('.gen-std', e => e.innerText).catch(() => '');
+  ok('G7 図面タブの一覧の上に「普通公差 HES D 0001-08 2級 適用」の帯', /普通公差 HES D 0001-08 2級 適用/.test(band), band);
+  const badges = await pg.$$eval('.gen-badge', b => b.length), vals = await pg.$$eval('.gen-vals', v => v.map(x => x.textContent));
+  ok('G8 普通公差を含む行だけ「普通」の印（測定φ36・大端ボア・距離36.2 の3行）、CAM行は普通の値を2行目に', badges === 3 && vals.length === 1 && vals[0] === '普通: φ36 0/−0.6（ボス外径）、C1.5 +0.8/0', badges + ' ' + JSON.stringify(vals));
+  const frames1 = (await pg.$$('.drw-gen')).length;
+  ok('G9 図面上の普通公差の箇所に常に点線枠（1ページ目：重複を除き2か所）', frames1 === 2, String(frames1));
+  await pg.click('div[style*="cursor: pointer"]:has(span:text-is("φ24"))'); await pg.waitForTimeout(1500);
+  ok('G10 行を選ぶと赤枠が出て、点線枠はそのまま', (await pg.$$('.drw-hl')).length === 1 && (await pg.$$('.drw-gen')).length === 2);
+  await pg.click('div[style*="cursor: pointer"]:has(span:text-is("36.2"))'); await pg.waitForTimeout(1800);
+  const lbl = await pg.textContent('text=/ページ/').catch(() => '');
+  ok('G11 2ページ目に移ると、そのページの点線枠だけ（1か所）', /^2 \//.test(lbl) && (await pg.$$('.drw-gen')).length === 1, lbl + ' ' + (await pg.$$('.drw-gen')).length);
+  // re-import into the existing project: gen and flags are updated with the CAM data, dims / measurements kept
+  await pg.click('button[aria-label="戻る"], button:has-text("←")').catch(() => {});
+  await pg.evaluate(() => { location.reload(); }); await pg.waitForTimeout(800);
+  const j2 = JSON.parse(JSON.stringify(j)); j2.gen = 'HES D 0001-08 1級'; j2.nc.features[0].locs = [b1, g1];
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j2)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(800);
+  p = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).filter(p => p.drawingNo === 'GD-1'));
+  ok('G12 同じ図番に貼り直すと規格と点線枠のフラグも更新（案件は増えない）', p.length === 1 && p[0].gen === 'HES D 0001-08 1級' && p[0].nc.features[0].locs.length === 2 && p[0].dims.length === 2, p.length + ' ' + (p[0] && p[0].gen));
+  await pg.close();
+  return R;
+}
+
 (async () => {
   const browser = await chromium.launch(); const errs = [];
   const a = await shots(browser, baseHtml, 'before', errs), b = await shots(browser, newHtml, 'after', errs);
@@ -402,6 +447,8 @@ async function genTests(browser, html, errs) {
   for (const k of b) console.log((a.includes(k) ? diff(`${outDir}/before_${k}.png`, `${outDir}/after_${k}.png`) : 'new screen').padEnd(32), k);
   console.log('== 取込試験（改修後）');
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
+  console.log('== 図面タブの普通公差の試験（改修後）');
+  for (const r of await genDrawTests(browser, newHtml, errs)) console.log(r);
   console.log('== 普通公差の印の試験（改修後）');
   for (const r of await genTests(browser, newHtml, errs)) console.log(r);
   console.log('== 図面タブ試験（改修後）');
