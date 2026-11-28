@@ -690,6 +690,25 @@ async function modTests(browser, html, errs) {
   await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(500);
   const r2 = await pg.$$eval('.mod-row', e => e.map(x => x.innerText.replace(/\s+/g, ' ').trim()));
   ok('Y9 CAMデータのない案件でも軸はモデル修正に出る（切替なし・位置がなければ「図面に位置なし」）', r2.length === 1 && /φ12 g6 -0\.006\/-0\.017 → φ11\.9885/.test(r2[0]) && /図面に位置なし/.test(r2[0]) && (await pg.$$('.cam-seg')).length === 1, JSON.stringify(r2));
+  // v2.17.0: one-sided general-tolerance shafts (not measured) kept as CAM rows with kind "軸"
+  const j3 = { partName:'MOD3', drawingNo:'MD-3', gen:'YGK-2-001',
+    nc:{ features:[{ name:'ボス', dia:['φ16（普通）'], locs:[{ p:1, x:0.5, y:0.3, w:0.02, h:0.03, v:'dia:0' }] }],
+         dists:[{ kind:'軸', nominal:16, upper:0, lower:-0.3, note:'普通 YGK-2-001', f:'ボス', locs:[{ p:1, x:0.5, y:0.3, w:0.02, h:0.03, g:1 }] }, { nominal:5, upper:0.2, lower:0, locs:[{ p:1, x:0.2, y:0.6, w:0.02, h:0.03 }] }] } };
+  await pg.click('text=←'); await pg.waitForTimeout(300);
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j3)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700);
+  await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(500);
+  const r3 = await pg.$$eval('.mod-row', e => e.map(x => x.innerText.replace(/\s+/g, ' ').trim()));
+  const st3 = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'MD-3').nc.dists.map(d => d.kind || ''));
+  ok('Y10 CAMデータの「軸」の行（普通公差の片側の軸）を取込んで保存し、モデル修正に「軸 φ16 0/-0.3 普通 → φ15.85（−0.15）」で出す', st3.join() === '軸,' && r3.length === 2 && /軸 φ16 0\/-0\.3 普通 → φ15\.85 （−0\.15）/.test(r3[0]) && /距離 5 \+0\.2\/0 → 5\.1/.test(r3[1]), JSON.stringify([st3, r3]));
+  await (await pg.$$('.mod-chk'))[0].check(); await pg.waitForTimeout(500);
+  await pg.click('.cam-seg:has-text("形状ごと")'); await pg.waitForTimeout(500);
+  const c3 = await pg.$$eval('.cam-row', e => e.map(x => x.innerText.replace(/\s+/g, ' ')));
+  const ck3 = await pg.$eval('.cam-row', e => [...e.querySelectorAll('.cam-chk')].map(x => x.checked));
+  ok('Y11 形状ごとでは、その形状のカードに「軸径 φ16 …（普通）」で入り、チェックは共有', /軸径 φ16 0\/-0\.3（15\.7〜16）/.test(c3[0]) && /中央 φ15\.85/.test(c3[0]) && ck3.join() === 'false,true', JSON.stringify([c3[0], ck3]));
+  await pg.click('text=←'); await pg.waitForTimeout(300);
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j3)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700);
+  const kept = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'MD-3').nc.dists[0].chk);
+  ok('Y12 貼り直しても「軸」の行のチェックは残る', kept === true, String(kept));
   await pg.close();
   return R;
 }

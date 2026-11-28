@@ -21,7 +21,7 @@
    node tools/verify.js ../baseline_vX.Y.Z.html index.html ../verify_out
    ```
    - 画面差分: 頼まれた変更とバージョン表記以外に差分が出たら原因を調べる。差分のある画面は必ず画像を目で見る。
-   - 取込試験: 9項目すべて OK。図面試験: D1〜D17・測定タブの図面 M0〜M3・縦横の持ち替え O1〜O2・改訂 R1〜R6・タブ構成 T1・CAMカード K1〜K6・値ごとの選択 V1〜V9・値ごとのチェックと中央値 W1〜W9・マウス操作 X1〜X7・モデル修正 Y1〜Y9・普通公差 G1〜G12 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。成績書の番号付き図面・印刷試験: S1〜S8 すべて OK（印刷は Chromium のPDF出力で用紙サイズを確認。python3 の pypdf を使う）。一覧の読込試験: C1〜C7・ログイン L1〜L4 すべて OK（Firebase SDK・Auth と Firestore REST を差し替え。この試験は http://127.0.0.1 で配信して行う。file:// だと localStorage が次のページに届かず不安定になる）。
+   - 取込試験: 9項目すべて OK。図面試験: D1〜D17・測定タブの図面 M0〜M3・縦横の持ち替え O1〜O2・改訂 R1〜R6・タブ構成 T1・CAMカード K1〜K6・値ごとの選択 V1〜V9・値ごとのチェックと中央値 W1〜W9・マウス操作 X1〜X7・モデル修正 Y1〜Y12・普通公差 G1〜G12 すべて OK（Googleログイン・Picker・Driveは tools/stubs で差し替え）。成績書の番号付き図面・印刷試験: S1〜S8 すべて OK（印刷は Chromium のPDF出力で用紙サイズを確認。python3 の pypdf を使う）。一覧の読込試験: C1〜C7・ログイン L1〜L4 すべて OK（Firebase SDK・Auth と Firestore REST を差し替え。この試験は http://127.0.0.1 で配信して行う。file:// だと localStorage が次のページに届かず不安定になる）。
    - ページエラー: none。
    - 新しい挙動を足したら、`tools/verify.js` の試験にも足す。
 6. **push**: `git push -u origin feature/<内容>`（浅いクローンなので `-c push.negotiate=true` を付ける）。
@@ -100,6 +100,7 @@
 - 行: チェック・番号の丸（未=赤 #D93025／済=緑 #188038）・種別・「57.5 +0.2/0 → 57.6（+0.1）」・図/注記（位置がなければ「図面に位置なし」）。
 - 図面: 対象全部に枠と番号の丸、引出線。押した1つだけ「番号＋中央値」の札（一番よい場所に置く）と赤枠。札・丸は他の札と対象の枠に重ならない場所を探す（図面の文字は避けられない）。図面の番号を押すと一覧のその行を選ぶ。
 - チェックの保存: 距離は dists の `chk`（形状ごとのカードと共有）、軸は dims の `camChk`。
+- v2.17.0〜：nc.dists の行に `kind:"軸"` があれば軸径（普通公差で片側になる軸など、測定に入れない軸）。モデル修正に「軸 φ16 0/-0.3 普通 → φ15.85」で出す（note が「普通」で始まれば「普通」の印）。形状ごとでは f の形状のカードに「軸径」の行（f なしは単独の「軸径」カード）。チェックは距離と同じ `chk`、貼り直しの引き継ぎは kind も一致が条件。
 - CAMデータのない案件でも軸があればモデル修正だけ出す（切替なし）。verify.js の古い試験は `camTab()`/`feat()` で「形状ごと」に切り替えてから見る。
 
 ## データ形式（取込JSON）
@@ -108,7 +109,7 @@
 - 同じ `drawingNo` の案件がある & `nc` あり → その案件の `nc` だけ置換（dims・測定値は保持、既存NCがあれば確認ダイアログ）
 - 該当なし → 新規案件（dims なし・nc のみでも可。nc のみは `drawingNo` 必須）
 - dims のみ → 従来通り新規案件
-- `nc.dists[]` の `f` は所属する形状名（features の name と同じ文字列）。CAMタブでその形状のカードにまとめる（v2.12.0〜）。
+- `nc.dists[]` の `kind:"軸"` は軸径の行（v2.17.0〜）。`f` は所属する形状名（features の name と同じ文字列）。CAMタブでその形状のカードにまとめる（v2.12.0〜）。
 - `nc` は表示専用。チェック欄（形状は `chks`、距離は `chk`）は案件データに保存。取込で置換しても、変わっていない値のチェックは残る（v2.14.0〜）。
 - dims / nc.features / nc.dists の各行は `locs:[{p,x,y,w,h}]`（図面上の位置、ページ番号と0〜1の割合。`g:1`＝普通公差、features は `v`＝どの値か）を持てる。同じ図番の再取込では既存寸法に locs だけ反映（値・測定値は保持）。
 - 図面（CAMタブ・測定タブの「図面」）: 案件の `drawing:{fileId,name}` に Google Drive の図面PDFを紐づけ、行タップで該当位置を表示。設定値（Cloudプロジェクト inspection-tool-515411、OAuthクライアントID、APIキー、ログインアカウント info-manager@groove-works.jp）は index.html の `GCFG`。ログインは login_hint でこのアカウントを指定し、アカウント選択画面を出さない（v2.4.1〜）。APIキーは Drive/Picker のみ・リファラ https://grooveworks.github.io/* のみに制限済み（/inspection-tool/* まで絞ると Picker が「デベロッパーキーが無効」になる）。

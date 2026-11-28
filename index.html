@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.16.1";
+const VER = "v2.17.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -332,7 +332,7 @@ function ncFromJSON(nc){
     return x; });
   const dists = (Array.isArray(nc.dists) ? nc.dists : []).map(d => {
     if (d.nominal == null || d.upper == null || d.lower == null) throw new Error("距離データの形式が不正です (nominal, upper, lower が必要)");
-    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true, locs:locsOf(d.locs) , ...(d.f ? { f:String(d.f) } : {}) };   // f = name of the feature (hole / shape) this distance belongs to
+    return { nominal:parseFloat(d.nominal), upper:parseFloat(d.upper), lower:parseFloat(d.lower), qty: parseInt(d.qty,10) > 1 ? parseInt(d.qty,10) : 1, view:str(d.view), note:str(d.note), chk:d.chk === true, locs:locsOf(d.locs) , ...(d.f ? { f:String(d.f) } : {}), ...(d.kind === "軸" ? { kind:"軸" } : {}) };   // kind "軸" = a shaft diameter (one-sided general tolerance etc.) kept with the distances; f = name of the feature (hole / shape) this distance belongs to
   });
   if (!features.length && !dists.length) throw new Error("ncデータ(features / dists)がありません");
   return { features, dists };
@@ -353,7 +353,7 @@ function carryChecks(old, next){
   next.features.forEach(f => { const o = old.features.find(x => x.name === f.name); if (!o) return;
     ncValues(f).forEach(([k, t]) => { const key = k + "|" + t; if (o.chks.includes(key) && !f.chks.includes(key)) f.chks.push(key); }); });
   const used = new Set();
-  next.dists.forEach(d => { const o = old.dists.find(x => !used.has(x) && x.chk && x.nominal === d.nominal && x.upper === d.upper && x.lower === d.lower && (x.f || "") === (d.f || "") && (x.note || "") === (d.note || ""));
+  next.dists.forEach(d => { const o = old.dists.find(x => !used.has(x) && x.chk && (x.kind || "") === (d.kind || "") && x.nominal === d.nominal && x.upper === d.upper && x.lower === d.lower && (x.f || "") === (d.f || "") && (x.note || "") === (d.note || ""));
     if (o){ d.chk = true; used.add(o); } });
   return next;
 }
@@ -1361,7 +1361,7 @@ function renderDrawing(body, mode){
 // model changes before CAM: one-sided / asymmetric distances and shaft diameters get remodelled to the middle of the tolerance
 function modItems(P, nc){
   const out = [], off = x => Math.abs((x.upper || 0) + (x.lower || 0)) > 1e-9;
-  (nc ? nc.dists : []).filter(off).forEach(x => out.push({ kind:"距離", o:x, name:String(x.nominal), nominal:x.nominal, upper:x.upper, lower:x.lower, view:x.view || "", note:x.note || "", locs:x.locs || [],
+  (nc ? nc.dists : []).filter(off).forEach(x => out.push({ kind:x.kind === "軸" ? "軸" : "距離", o:x, name:(x.kind === "軸" ? "φ" : "") + x.nominal, pre:x.kind === "軸" ? "φ" : "", gen:/^普通/.test(x.note || ""), nominal:x.nominal, upper:x.upper, lower:x.lower, view:x.view || "", note:x.note || "", locs:x.locs || [],
     get done(){ return x.chk === true; }, set done(b){ x.chk = b; } }));
   P.dims.filter(x => x.type === "軸" && off(x)).forEach(x => out.push({ kind:"軸", o:x, name:(x.name || "φ" + x.nominal) + (x.tClass ? " " + x.tClass : ""), pre:"φ", nominal:x.nominal, upper:x.upper, lower:x.lower, view:"", note:"", locs:x.locs || [],
     get done(){ return x.camChk === true; }, set done(b){ x.camChk = b; } }));
@@ -1438,7 +1438,7 @@ function camList(list, setRows, rowEls, select, redraw){
       mid ? h("span", { class:"cam-mid", style:MONO + ";font-size:12px;color:#5F6368;white-space:nowrap", text:"中央 " + mid }) : null ]);
     if (locs && locs.length){ const i = items.push({ locs }) - 1; rowEls[i] = el; el.__mark = on => { el.style.background = on ? "#D2E3FC" : ""; el.style.boxShadow = on ? "inset 0 0 0 1px #007AFF" : ""; }; pick(el, i); if (DRW.sel === i) el.__mark(true); }
     return el; };
-  const distTxt = x => (x.note && !/^普通/.test(x.note) ? x.note + " " : "") + x.nominal + " " + fmtTol(x.upper) + "/" + fmtTol(x.lower) + "（" + lLim(x) + "〜" + uLim(x) + "）" + (/^普通/.test(x.note || "") ? "（普通）" : "");
+  const distTxt = x => (x.note && !/^普通/.test(x.note) ? x.note + " " : "") + (x.kind === "軸" ? "φ" : "") + x.nominal + " " + fmtTol(x.upper) + "/" + fmtTol(x.lower) + "（" + lLim(x) + "〜" + uLim(x) + "）" + (/^普通/.test(x.note || "") ? "（普通）" : "");
   const line = (label, vals) => vals.filter(v => v && v.t).length ? h("div", { style:"display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.7" }, [
     h("span", { style:"flex-shrink:0;width:66px;font-size:11px;color:#5F6368", text:label }),
     h("div", { style:"min-width:0;flex:1;display:flex;flex-direction:column;align-items:flex-start" }, vals.filter(v => v && v.t).map(v => valEl(v.t, v.locs, v.ck, v.mid)))
@@ -1456,7 +1456,7 @@ function camList(list, setRows, rowEls, select, redraw){
     const vs = (key, arr) => (arr || []).map((t, k) => ({ t, locs: perVal ? fl.filter(b => b.v === key + ":" + k) : null, ck: fck(key, t), mid: /^(dia|depth|chamfer)$/.test(key) ? midText(t) : "" }));
     const v1 = (key, t) => [{ t, locs: perVal ? fl.filter(b => b.v === key) : null, ck: fck(key, t) }];
     const cks = r.k === "f" ? ncValues(o).map(([k, t]) => fck(k, t)).concat(r.ds.map(dck)) : [dck(o)];
-    const title = r.k === "f" ? (o.name || "—") : ((o.note && !/^普通/.test(o.note)) ? o.note : "距離");
+    const title = r.k === "f" ? (o.name || "—") : ((o.note && !/^普通/.test(o.note)) ? o.note : o.kind === "軸" ? "軸径" : "距離");
     const el = h("div", { class:"cam-row", style:"padding:10px 12px;border-bottom:1px solid #E8EAED;" + (has ? "cursor:pointer;" : ""),
       onclick: e => { if (!has || e.target.closest("input,button")) return; select(ci); } }, [
       h("div", { style:"display:flex;gap:8px;align-items:center;margin-bottom:4px" }, [
@@ -1471,11 +1471,12 @@ function camList(list, setRows, rowEls, select, redraw){
       revLine(r.k === "f" ? "features" : "dists", o, "margin:0 0 4px 0"),
       h("div", { style:"padding-left:0" }, r.k === "f" ? [
         line("径", vs("dia", o.dia)), line("深さ", vs("depth", o.depth)), line("ねじ", v1("thread", o.thread)), line("面取り・R", vs("chamfer", o.chamfer)),
-        line("位置度", vs("gdt", o.gdt)), line("粗さ", v1("rough", o.rough)), line("距離", r.ds.map(x => ({ t:distTxt(x), locs:x.locs || [], ck:dck(x), mid:String(midLim(x)) }))),
+        line("位置度", vs("gdt", o.gdt)), line("粗さ", v1("rough", o.rough)), line("距離", r.ds.filter(x => x.kind !== "軸").map(x => ({ t:distTxt(x), locs:x.locs || [], ck:dck(x), mid:String(midLim(x)) }))),
+        line("軸径", r.ds.filter(x => x.kind === "軸").map(x => ({ t:distTxt(x), locs:x.locs || [], ck:dck(x), mid:"φ" + midLim(x) }))),
         o.note ? (() => { const n = h("div", { class:"cam-val", style:"font-size:12px;color:#5F6368;line-height:1.5;margin:2px 0 0 -4px;padding:0 4px;border-radius:6px", text:o.note }), nl = perVal ? fl.filter(b => b.v === "note") : [];
           if (nl.length){ const i = items.push({ locs:nl }) - 1; rowEls[i] = n; n.__mark = on => { n.style.background = on ? "#D2E3FC" : ""; n.style.boxShadow = on ? "inset 0 0 0 1px #007AFF" : ""; }; pick(n, i); if (DRW.sel === i) n.__mark(true); }
           return n; })() : null
-      ] : [ line("距離", [{ t:distTxt(o), ck:dck(o), mid:String(midLim(o)) }]) ])
+      ] : [ line(o.kind === "軸" ? "軸径" : "距離", [{ t:distTxt(o), ck:dck(o), mid:(o.kind === "軸" ? "φ" : "") + midLim(o) }]) ])
     ]);
     el.__mark = on => { el.style.background = on ? "#E1F0FF" : ""; el.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; };
     if (DRW.sel === ci) el.__mark(true);
@@ -1502,6 +1503,7 @@ function modList(list, mods, setRows, rowEls, select, redraw){
         h("div", { style:"display:flex;gap:8px;align-items:baseline;flex-wrap:wrap" }, [
           h("span", { style:"font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;background:#F1F3F4;color:#5F6368", text:m.kind }),
           h("span", { style:MONO + ";font-size:14px", text:m.name + " " + fmtTol(m.upper) + "/" + fmtTol(m.lower) }),
+          m.gen ? h("span", { class:"gen-badge", title:m.note, style:"font-size:11px;font-weight:700;padding:0 5px;border-radius:6px;border:1px solid #9AA0A6;background:#FFF;color:#5F6368", text:"普通" }) : null,
           h("span", { style:"font-size:13px;color:#5F6368", text:"→" }),
           h("span", { class:"mod-mid", style:MONO + ";font-size:17px;font-weight:800;color:#202124", text:(m.pre || "") + m.mid }),
           h("span", { class:"mod-dlt", style:MONO + ";font-size:13px;font-weight:700;color:#0062CC", text:"（" + fmt(m.dlt) + "）" })
