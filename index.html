@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.15.0";
+const VER = "v2.16.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -514,7 +514,7 @@ const MONO = "font-family:'SF Mono',Menlo,Consolas,monospace;font-variant-numeri
 const app = () => document.getElementById("app");
 
 let P = null, TAB = "meas", EDIT = false, SHOWNEW = false, SHOWIMP = false, unsub = null, saveT = null;
-let NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }, IMPTEXT = "", MGTEXT = "", SHOWMERGE = false, NCTEXT = "", SHOWNCIMP = false, MEASDRW = false, DRWSEL = {};   // MEASDRW: drawing panel open on the measurement tab
+let NF = { partName:"", drawingNo:"", preset:"yes", rounds:10 }, IMPTEXT = "", MGTEXT = "", SHOWMERGE = false, NCTEXT = "", SHOWNCIMP = false, MEASDRW = false, DRWSEL = {}, CAMVIEW = "mod";   // CAMVIEW: "mod" = model-change list, "feat" = by feature   // MEASDRW: drawing panel open on the measurement tab
 
 function save(){ clearTimeout(saveT); saveT = setTimeout(() => { if (P) Store.saveProject(P); }, 400); }
 
@@ -1192,7 +1192,7 @@ function renderDrawing(body, mode){
     pane.appendChild(head);
   } else {
     list.appendChild(head);
-    camList(list, r => rows = r, rowEls, select);
+    camList(list, r => rows = r, rowEls, select, () => { if (DRW.pdf && d && DRW.fileId === d.fileId && DRW.cv) show(); });
   }
   pane.appendChild(view);
   wrap.appendChild(pane);
@@ -1323,6 +1323,29 @@ function renderDrawing(body, mode){
       rows.forEach(r => r.locs.forEach(b => { const k = [b.p, b.x, b.y, b.w, b.h].join();
         if (!b.g || b.p !== pno || seen.has(k)) return; seen.add(k);
         page.appendChild(h("div", { class:"drw-gen", style:"position:absolute;pointer-events:none;border:2px dashed #E37400;border-radius:4px;left:" + (b.x * cv.w - 4) + "px;top:" + (b.y * cv.h - 4) + "px;width:" + (b.w * cv.w + 8) + "px;height:" + (b.h * cv.h + 8) + "px" })); }));
+      // model-change list: every target on this page boxed and numbered (red = to do, green = done); the number picks it
+      const placed = [], boxes = [], lines = [];
+      rows.forEach(r => r.mk && r.locs.forEach(b => { if (b.p === pno) boxes.push([b.x * cv.w - 3, b.y * cv.h - 3, b.w * cv.w + 6, b.h * cv.h + 6]); }));
+      const hit = (a, c) => a[0] < c[0] + c[2] && c[0] < a[0] + a[2] && a[1] < c[1] + c[3] && c[1] < a[1] + a[3];
+      const order = rows.map((r, ri) => ri).filter(ri => rows[ri].mk).sort((a, b) => (b === DRW.sel) - (a === DRW.sel));   // the picked one gets the best spot
+      order.forEach(ri => { const r = rows[ri], on = ri === DRW.sel; r.locs.filter(b => b.p === pno).forEach(b => {
+        const x = b.x * cv.w, y = b.y * cv.h, w = b.w * cv.w, hh = b.h * cv.h, col = r.mk.done ? "#188038" : "#D93025", S = 24;
+        const mt = on ? (r.mk.pre || "") + r.mk.mid : "", W = on ? S + 8 + mt.length * 9 : S;   // the picked one: number + middle value (read on the drawing itself); the rest: number only
+        page.appendChild(h("div", { class:"mod-box", style:"position:absolute;pointer-events:none;border:2px solid " + col + ";border-radius:3px;left:" + (x - 3) + "px;top:" + (y - 3) + "px;width:" + (w + 6) + "px;height:" + (hh + 6) + "px;box-sizing:border-box" }));
+        const cand = [];
+        for (let k = 0; k < 8; k++){ cand.push([x + w / 2 - W / 2, y - S - 4 - k * (S + 2)], [x + w / 2 - W / 2, y + hh + 4 + k * (S + 2)], [x - W - 4 - k * 8, y + hh / 2 - S / 2], [x + w + 4 + k * 8, y + hh / 2 - S / 2]); }
+        const pos = cand.map(c => [c[0], c[1], W, S]).find(c => !placed.some(q => hit(c, q)) && !boxes.some(q => hit(c, q))) || [x - W - 4, y - S - 4, W, S];
+        placed.push(pos);
+        const pcx = pos[0] + W / 2, pcy = pos[1] + S / 2, bx = Math.max(x - 3, Math.min(x + w + 3, pcx)), by = Math.max(y - 3, Math.min(y + hh + 3, pcy));   // leader: number → its box
+        lines.push('<line x1="' + pcx + '" y1="' + pcy + '" x2="' + bx + '" y2="' + by + '" stroke="' + col + '" stroke-width="1.5"/>');
+        page.appendChild(h("div", { class:"mod-pin", style:"position:absolute;z-index:3;cursor:pointer;display:flex;align-items:center;gap:4px;left:" + pos[0] + "px;top:" + pos[1] + "px;width:" + W + "px;height:" + S + "px;box-sizing:border-box;padding:0 " + (on ? 6 : 0) + "px 0 0;border-radius:" + S + "px;background:#FFF;border:2px solid " + col + ";box-shadow:0 1px 3px rgba(0,0,0,.25)",
+          onclick: e => { e.stopPropagation(); select(ri); if (rowEls[ri]) rowEls[ri].scrollIntoView({ block:"nearest" }); } }, [
+          h("span", { class:"mod-pin-no", text:String(r.mk.no), style:"flex-shrink:0;width:" + (S - 4) + "px;height:" + (S - 4) + "px;border-radius:50%;background:" + col + ";color:#FFF;font:800 12px/" + (S - 4) + "px sans-serif;text-align:center" }),
+          on ? h("span", { class:"mod-pin-mid", text:mt, style:MONO + ";font-size:14px;font-weight:800;color:" + col + ";white-space:nowrap" }) : null
+        ]));
+      }); });
+      if (lines.length){ const sv = document.createElementNS("http://www.w3.org/2000/svg", "svg"); sv.setAttribute("class", "mod-lines"); sv.setAttribute("width", cv.w); sv.setAttribute("height", cv.h);
+        sv.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:2;overflow:visible"; sv.innerHTML = lines.join(""); page.appendChild(sv); }
       locs.filter(b => b.p === pno).forEach((b, k) => page.appendChild(h("div", { class: k === 0 ? "drw-hl drw-main" : "drw-hl",
         style:"left:" + (b.x * cv.w - pad) + "px;top:" + (b.y * cv.h - pad) + "px;width:" + (b.w * cv.w + pad * 2) + "px;height:" + (b.h * cv.h + pad * 2) + "px" })));
       if (focus) view.scrollTo(focus.fx * cv.w + page.offsetLeft - focus.mx, focus.fy * cv.h + page.offsetTop - focus.my);
@@ -1333,7 +1356,20 @@ function renderDrawing(body, mode){
 }
 
 /* ── CAM list (by feature) — left of the drawing in the CAM tab ── */
-function camList(list, setRows, rowEls, select){
+// model changes before CAM: one-sided / asymmetric distances and shaft diameters get remodelled to the middle of the tolerance
+function modItems(P, nc){
+  const out = [], off = x => Math.abs((x.upper || 0) + (x.lower || 0)) > 1e-9;
+  (nc ? nc.dists : []).filter(off).forEach(x => out.push({ kind:"距離", o:x, name:String(x.nominal), nominal:x.nominal, upper:x.upper, lower:x.lower, view:x.view || "", note:x.note || "", locs:x.locs || [],
+    get done(){ return x.chk === true; }, set done(b){ x.chk = b; } }));
+  P.dims.filter(x => x.type === "軸" && off(x)).forEach(x => out.push({ kind:"軸", o:x, name:(x.name || "φ" + x.nominal) + (x.tClass ? " " + x.tClass : ""), pre:"φ", nominal:x.nominal, upper:x.upper, lower:x.lower, view:"", note:"", locs:x.locs || [],
+    get done(){ return x.camChk === true; }, set done(b){ x.camChk = b; } }));
+  const k = m => { const b = m.locs[0]; return b ? [b.p, Math.round(b.y * 20), b.x] : [1e9, 0, 0]; };   // drawing order: page, then top to bottom, left to right
+  out.sort((a, b) => { const A = k(a), B = k(b); return A[0] - B[0] || A[1] - B[1] || A[2] - B[2]; });
+  out.forEach((m, i) => { m.no = i + 1; m.mid = r4(m.nominal + (m.upper + m.lower) / 2); m.dlt = r4((m.upper + m.lower) / 2); });
+  return out;
+}
+
+function camList(list, setRows, rowEls, select, redraw){
   const nc = ncOf(P);
   if (nc) P.nc = nc;   // rows below edit these objects directly (check column)
   const box = h("div", { style:"padding:8px 12px 0" });
@@ -1366,6 +1402,17 @@ function camList(list, setRows, rowEls, select){
     ]));
   }
 
+  // view switch: モデル修正 (what to change in CAD before CAM) | 形状ごと (every tolerance of each feature)
+  const mods = modItems(P, nc);
+  const view = !mods.length ? "feat" : !nc ? "mod" : CAMVIEW;
+  if (mods.length){
+    const seg = (key, label) => h("button", { class:"cam-seg", style:"flex:1;height:36px;border:none;border-radius:9px;font-size:13px;font-weight:700;" + (view === key ? "background:#FFF;color:#0062CC;box-shadow:0 1px 3px rgba(0,0,0,.15)" : "background:transparent;color:#5F6368"),
+      text:label, onclick: () => { if (view === key) return; CAMVIEW = key; DRW.sel = null; renderProject(); } });
+    const nd = mods.filter(m => m.done).length;
+    box.appendChild(h("div", { style:"display:flex;gap:4px;padding:3px;background:#F1F3F4;border-radius:12px;margin-bottom:8px" }, [
+      seg("mod", "モデル修正 " + nd + "/" + mods.length), nc ? seg("feat", "形状ごと") : null ]));
+  }
+  if (view === "mod"){ modList(list, mods, setRows, rowEls, select, redraw); return; }
   if (!nc){
     setRows([]);
     list.appendChild(h("div", { style:"text-align:center;padding:40px 16px;color:#5F6368;font-size:14px", text:"CAMデータがまだありません" }));
@@ -1433,6 +1480,39 @@ function camList(list, setRows, rowEls, select){
     rowEls[ci] = el; list.appendChild(el);
   });
   const rb = revBox(["穴・形状", "距離"]); if (rb){ rb.style.margin = "10px 12px"; list.appendChild(rb); }
+}
+
+// model-change list: number (same number on the drawing), kind, drawing value → middle value (change), done
+function modList(list, mods, setRows, rowEls, select, redraw){
+  const items = mods.map(m => ({ locs:m.locs, mk:m }));
+  setRows(items);
+  list.appendChild(h("div", { style:"padding:2px 12px 8px;font-size:12px;color:#5F6368;line-height:1.5", text:"片側・非対称公差の距離と軸を、CADで中央値に直す一覧。番号は図面の番号と同じ（図面の番号を押しても選べる）" }));
+  const fmt = v => (v > 0 ? "+" : v < 0 ? "−" : "±") + Math.abs(v);
+  mods.forEach((m, i) => {
+    const no = h("span", { class:"mod-no", style:"flex-shrink:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#FFF", text:String(m.no) });
+    const paint = () => { no.style.background = m.done ? "#188038" : "#D93025"; el.style.opacity = m.done ? ".55" : ""; };
+    const cb = h("input", { type:"checkbox", class:"mod-chk", checked:m.done, style:"width:22px;height:22px;flex-shrink:0;margin:0",
+      onclick: e => e.stopPropagation(), onchange: e => { m.done = e.target.checked; save(); paint(); upd(); redraw(); } });
+    const el = h("div", { class:"mod-row", style:"display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid #E8EAED;" + (m.locs.length ? "cursor:pointer" : ""),
+      onclick: e => { if (!m.locs.length || e.target.closest("input")) return; select(i); } }, [
+      cb, no,
+      h("div", { style:"min-width:0;flex:1" }, [
+        h("div", { style:"display:flex;gap:8px;align-items:baseline;flex-wrap:wrap" }, [
+          h("span", { style:"font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;background:#F1F3F4;color:#5F6368", text:m.kind }),
+          h("span", { style:MONO + ";font-size:14px", text:m.name + " " + fmtTol(m.upper) + "/" + fmtTol(m.lower) }),
+          h("span", { style:"font-size:13px;color:#5F6368", text:"→" }),
+          h("span", { class:"mod-mid", style:MONO + ";font-size:17px;font-weight:800;color:#202124", text:(m.pre || "") + m.mid }),
+          h("span", { class:"mod-dlt", style:MONO + ";font-size:13px;font-weight:700;color:#0062CC", text:"（" + fmt(m.dlt) + "）" })
+        ]),
+        (m.note || m.view || !m.locs.length) ? h("div", { style:"font-size:11px;color:#5F6368;margin-top:2px", text:[m.view, m.note].filter(Boolean).join("・") + (m.locs.length ? "" : "（図面に位置なし）") }) : null
+      ])
+    ]);
+    paint();
+    el.__mark = on => { el.style.background = on ? "#E1F0FF" : ""; el.style.boxShadow = on ? "inset 4px 0 0 #007AFF" : ""; };
+    if (DRW.sel === i) el.__mark(true);
+    rowEls[i] = el; list.appendChild(el);
+  });
+  const upd = () => { const b = list.parentElement && list.parentElement.querySelector(".cam-seg"); if (b) b.textContent = "モデル修正 " + mods.filter(m => m.done).length + "/" + mods.length; };
 }
 
 function renderReport(body){
