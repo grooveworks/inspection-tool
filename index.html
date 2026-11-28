@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.14.0";
+const VER = "v2.15.0";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -1258,6 +1258,40 @@ function renderDrawing(body, mode){
   };
   view.addEventListener("touchend", pinchEnd);
   view.addEventListener("touchcancel", pinchEnd);
+
+  // PC mouse, like CAD: right-button drag moves the drawing, the wheel zooms around the mouse pointer
+  // (left click stays for picking; the browser menu is not shown on the drawing)
+  view.addEventListener("contextmenu", e => e.preventDefault());
+  let pan = null;
+  view.addEventListener("pointerdown", e => {
+    if (e.pointerType !== "mouse" || e.button !== 2) return;
+    pan = { id:e.pointerId, x:e.clientX, y:e.clientY, sl:view.scrollLeft, st:view.scrollTop };
+    try { view.setPointerCapture(e.pointerId); } catch(_){}
+    view.style.cursor = "grabbing"; e.preventDefault();
+  });
+  view.addEventListener("pointermove", e => { if (!pan || e.pointerId !== pan.id) return; view.scrollLeft = pan.sl - (e.clientX - pan.x); view.scrollTop = pan.st - (e.clientY - pan.y); });
+  const panEnd = e => { if (!pan || e.pointerId !== pan.id) return; pan = null; view.style.cursor = ""; try { view.releasePointerCapture(e.pointerId); } catch(_){} };
+  view.addEventListener("pointerup", panEnd);
+  view.addEventListener("pointercancel", panEnd);
+  // wheel: preview with a CSS transform while turning, redraw once it stops (like the pinch); one notch ≈ ×1.2
+  let wz = null, wzT = 0;
+  view.addEventListener("wheel", e => {
+    if (!DRW.cv || !DRW.scale || pin) return;
+    e.preventDefault();
+    if (!wz){
+      const r = view.getBoundingClientRect(), m = { x:e.clientX - r.left, y:e.clientY - r.top };
+      const px = view.scrollLeft + m.x - page.offsetLeft, py = view.scrollTop + m.y - page.offsetTop;
+      wz = { f:1, m, fx:px / DRW.cv.w, fy:py / DRW.cv.h, s0:DRW.scale };
+      dropDetail(); page.style.transformOrigin = px + "px " + py + "px";
+    }
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+    wz.f = Math.min(DRW_MAX / wz.s0, Math.max(DRW_MIN / wz.s0, wz.f * Math.pow(1.2, -dy / 100)));
+    page.style.transform = "scale(" + wz.f + ")";
+    clearTimeout(wzT);
+    wzT = setTimeout(() => { const p0 = wz; wz = null; if (!p0) return;
+      if (Math.abs(p0.f - 1) < 0.01){ page.style.transform = ""; return; }
+      DRW.scale = p0.s0 * p0.f; show({ fx:p0.fx, fy:p0.fy, mx:p0.m.x, my:p0.m.y }); }, 200);
+  }, { passive:false });
   show();   // after the declarations above: with the page image cached (rotation / re-render) show() reaches them synchronously
 
   // draw the page only when page / zoom / file changed (cached in DRW.cv); otherwise just move the boxes

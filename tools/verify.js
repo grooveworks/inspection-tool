@@ -585,6 +585,55 @@ async function camCheckTests(browser, html, errs) {
   return R;
 }
 
+async function mouseTests(browser, html, errs) {
+  // v2.15.0: PC mouse on the drawing — right-button drag moves it, the wheel zooms around the pointer, no browser menu, left click unchanged
+  const pg = await open(browser, html, 1180, 820, errs, 'mouse');
+  const st = path.join(__dirname, 'stubs'), fx = path.join(__dirname, 'fixtures');
+  await pg.route(/accounts\.google\.com\/gsi\/client/, r => r.fulfill({ path:path.join(st,'gsi.js'), contentType:'application/javascript' }));
+  await pg.route(/apis\.google\.com\/js\/api\.js/, r => r.fulfill({ path:path.join(st,'picker.js'), contentType:'application/javascript' }));
+  await pg.route(/googleapis\.com\/drive\/v3\/files/, r => r.fulfill({ path:path.join(fx,'test_drawing.pdf'), contentType:'application/pdf' }));
+  await pg.goto('file://' + path.resolve(html)); await pg.waitForTimeout(300);
+  const R = [], ok = (n, c, i) => R.push(`${c ? 'OK ' : 'NG '} ${n}${i ? '  ' + i : ''}`);
+  const j = { partName:'MOUSE', drawingNo:'MS-1', nc:{ features:[{ name:'穴A', dia:['φ10 +0.1/0'], locs:[{ p:1, x:0.5, y:0.5, w:0.04, h:0.02, v:'dia:0' }] }], dists:[] }, drawing:{ fileId:'MFILE', name:'MS-1.pdf' } };
+  await pg.click('text=JSONから取込'); await pg.fill('textarea', JSON.stringify(j)); await pg.click('button:text-is("取込")'); await pg.waitForTimeout(700);
+  await pg.click('button:text-matches("^CAM")'); await pg.waitForTimeout(300);
+  const op = await pg.$('button:text-is("図面を開く")'); if (op) await op.click(); await pg.waitForSelector('canvas', { timeout:10000 }).catch(() => {}); await pg.waitForTimeout(600);
+  const V = () => pg.evaluate(() => { const v = document.querySelector('canvas').parentElement.parentElement, r = v.getBoundingClientRect(); return { sl:v.scrollLeft, st:v.scrollTop, l:r.left, t:r.top, w:r.width, h:r.height, scale:DRW.scale, menu:window.__menu === true }; });
+  // start from a zoomed-in view so the drawing can move both ways
+  await pg.click('button:text-is("＋")'); await pg.waitForTimeout(1200); await pg.click('button:text-is("＋")'); await pg.waitForTimeout(1500);
+  let v0 = await V();
+  await pg.evaluate(() => { const v = document.querySelector('canvas').parentElement.parentElement; v.scrollLeft = 400; v.scrollTop = 400; addEventListener('contextmenu', e => { window.__menu = !e.defaultPrevented; }); });
+  v0 = await V();
+  const cx = v0.l + v0.w / 2, cy = v0.t + v0.h / 2;
+  await pg.mouse.move(cx, cy); await pg.mouse.down({ button:'right' }); await pg.mouse.move(cx - 60, cy - 40, { steps:6 }); await pg.mouse.move(cx - 120, cy - 80, { steps:6 }); await pg.mouse.up({ button:'right' });
+  await pg.waitForTimeout(300);
+  let v1 = await V();
+  ok('X1 右ボタンを押したままドラッグ → 図面がドラッグした分だけ動く（右下へ120・80px 送ると表示位置が +120・+80）', Math.abs((v1.sl - v0.sl) - 120) <= 2 && Math.abs((v1.st - v0.st) - 80) <= 2, JSON.stringify([v0.sl, v0.st, v1.sl, v1.st]));
+  await pg.mouse.click(cx, cy, { button:'right' }); await pg.waitForTimeout(200);
+  ok('X2 図面の上で右クリックしてもブラウザのメニューは出さない', (await V()).menu === false);
+  await pg.mouse.move(cx, cy); await pg.mouse.down(); await pg.mouse.move(cx - 100, cy - 100, { steps:5 }); await pg.mouse.up(); await pg.waitForTimeout(200);
+  const v2 = await V();
+  ok('X3 左ボタンのドラッグでは図面は動かない（左は選ぶ操作のまま）', v2.sl === v1.sl && v2.st === v1.st, JSON.stringify([v1.sl, v1.st, v2.sl, v2.st]));
+  // wheel: the drawing point under the pointer stays under the pointer
+  const mx = v0.l + 300, my = v0.t + 250;
+  const pt = () => pg.evaluate(([mx, my]) => { const v = document.querySelector('canvas').parentElement.parentElement, pg = document.querySelector('canvas').parentElement, r = v.getBoundingClientRect();
+    return { fx:(v.scrollLeft + mx - r.left - pg.offsetLeft) / DRW.cv.w, fy:(v.scrollTop + my - r.top - pg.offsetTop) / DRW.cv.h, scale:DRW.scale, w:DRW.cv.w }; }, [mx, my]);
+  const a = await pt();
+  await pg.mouse.move(mx, my); await pg.mouse.wheel(0, -100); await pg.waitForTimeout(60); await pg.mouse.wheel(0, -100); await pg.waitForTimeout(1800);
+  const b = await pt();
+  ok('X4 ホイールを奥へ2目盛 → 1.44倍に拡大、マウスの下の図面の点はそのまま', Math.abs(b.scale / a.scale - 1.44) < 0.01 && Math.abs((b.fx - a.fx) * b.w) < 3 && Math.abs((b.fy - a.fy) * b.w) < 3, JSON.stringify([a, b]));
+  await pg.mouse.wheel(0, 100); await pg.waitForTimeout(1800);
+  const c = await pt();
+  ok('X5 ホイールを手前へ1目盛 → 1/1.2 に縮小', Math.abs(c.scale / b.scale - 1 / 1.2) < 0.01, JSON.stringify([b.scale, c.scale]));
+  for (let i = 0; i < 40; i++) await pg.mouse.wheel(0, 100);
+  await pg.waitForTimeout(1800);
+  ok('X6 縮小は下限 0.3 で止まる', Math.abs((await pt()).scale - 0.3) < 0.001, String((await pt()).scale));
+  await pg.click('.cam-val:has-text("φ10 +0.1/0")'); await pg.waitForTimeout(1500);
+  ok('X7 左クリックで値を選ぶと、今までどおりその場所に赤枠', (await pg.$$('.drw-hl')).length === 1);
+  await pg.close();
+  return R;
+}
+
 (async () => {
   const browser = await chromium.launch(); const errs = [];
   const a = await shots(browser, baseHtml, 'before', errs), b = await shots(browser, newHtml, 'after', errs);
@@ -594,6 +643,8 @@ async function camCheckTests(browser, html, errs) {
   for (const r of await importTests(browser, newHtml, errs)) console.log(r);
   console.log('== CAMタブの普通公差・カードの試験（改修後）');
   for (const r of await genDrawTests(browser, newHtml, errs)) console.log(r);
+  console.log('== 図面のマウス操作の試験（改修後）');
+  for (const r of await mouseTests(browser, newHtml, errs)) console.log(r);
   console.log('== CAMの値ごとのチェック・中央値の試験（改修後）');
   for (const r of await camCheckTests(browser, newHtml, errs)) console.log(r);
   console.log('== CAMカードの値ごとの選択の試験（改修後）');
