@@ -667,10 +667,10 @@ async function modTests(browser, html, errs) {
   ok('Y3 図面には対象全部に番号と枠（未は赤）、中央値はまだ出さない', pn.length === 3 && pn.map(x => x.t).sort().join() === '1,2,3' && pn.every(x => x.red) && (await pg.$$('.mod-box')).length === 3 && (await pg.$$('.mod-pin-mid')).length === 0, JSON.stringify(pn));
   await pg.click('.mod-row:has-text("66.1")'); await pg.waitForTimeout(1500);
   pn = await pins();
-  ok('Y4 一覧の行を押す → その1つだけ図面に「番号＋中央値」の札と赤枠', (await pg.$$eval('.mod-pin-mid', e => e.map(x => x.textContent))).join() === '66' && pn.filter(x => / /.test(x.t)).length === 1 && (await pg.$$('.drw-hl')).length === 1, JSON.stringify(pn));
-  await pg.click('.mod-pin:has-text("1")'); await pg.waitForTimeout(1500);
+  ok('Y4 一覧の行を押す → その1つだけ図面に「番号＋中央値＋動かす量」の札と赤枠', (await pg.$$eval('.mod-pin-dlt', e => e.map(x => x.textContent))).join() === '（−0.1）' && (await pg.$$eval('.mod-pin-mid', e => e.map(x => x.textContent))).join() === '66' && pn.filter(x => / /.test(x.t)).length === 1 && (await pg.$$('.drw-hl')).length === 1, JSON.stringify(pn));
+  await pg.click('.mod-pin:has(.mod-pin-no:text-is("1"))'); await pg.waitForTimeout(1500);
   const selRow = await pg.$$eval('.mod-row', e => e.findIndex(x => x.style.background));
-  ok('Y5 図面の番号を押す → 一覧のその行が選ばれ、札がその値（57.6）に替わる', selRow === 0 && (await pg.$$eval('.mod-pin-mid', e => e.map(x => x.textContent))).join() === '57.6', String(selRow));
+  ok('Y5 図面の番号を押す → 一覧のその行が選ばれ、札がその値（57.6（+0.1））に替わる', selRow === 0 && (await pg.$$eval('.mod-pin-mid', e => e.map(x => x.textContent))).join() === '57.6' && (await pg.$$eval('.mod-pin-dlt', e => e.map(x => x.textContent))).join() === '（+0.1）', String(selRow));
   const sel0 = await pg.evaluate(() => DRW.sel);
   await (await pg.$$('.mod-chk'))[0].check(); await (await pg.$$('.mod-chk'))[1].check(); await pg.waitForTimeout(800);
   const pr = await pg.evaluate(() => JSON.parse(localStorage.getItem('_projects')).find(p => p.drawingNo === 'MD-1'));

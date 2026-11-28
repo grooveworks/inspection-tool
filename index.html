@@ -26,7 +26,7 @@ a{color:#0062CC;text-decoration:none}a:hover{color:#004A99}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
-const VER = "v2.16.0";
+const VER = "v2.16.1";
 
 const FB = {apiKey:"AIzaSyAvrk3u_b_TChw_FbSpXPOuIxk-_4Afnto",authDomain:"inspection-tool-f7c6e.firebaseapp.com",projectId:"inspection-tool-f7c6e",storageBucket:"inspection-tool-f7c6e.firebasestorage.app",messagingSenderId:"316259821956",appId:"1:316259821956:web:940bb39c64267a2fe015d1"};
 let db = null, useFB = false, inited = false, auth = null;
@@ -1330,7 +1330,8 @@ function renderDrawing(body, mode){
       const order = rows.map((r, ri) => ri).filter(ri => rows[ri].mk).sort((a, b) => (b === DRW.sel) - (a === DRW.sel));   // the picked one gets the best spot
       order.forEach(ri => { const r = rows[ri], on = ri === DRW.sel; r.locs.filter(b => b.p === pno).forEach(b => {
         const x = b.x * cv.w, y = b.y * cv.h, w = b.w * cv.w, hh = b.h * cv.h, col = r.mk.done ? "#188038" : "#D93025", S = 24;
-        const mt = on ? (r.mk.pre || "") + r.mk.mid : "", W = on ? S + 8 + mt.length * 9 : S;   // the picked one: number + middle value (read on the drawing itself); the rest: number only
+        const dv = r.mk.dlt, dt = on ? "（" + (dv > 0 ? "+" : dv < 0 ? "−" : "±") + Math.abs(dv) + "）" : "";   // how much to move from the drawing value (no mental arithmetic in CAD)
+        const mt = on ? (r.mk.pre || "") + r.mk.mid : "", W = on ? S + 10 + mt.length * 9 + (dt.length - 2) * 8 + 22 : S;   // the picked one: number + middle value + change (read on the drawing itself); the rest: number only
         page.appendChild(h("div", { class:"mod-box", style:"position:absolute;pointer-events:none;border:2px solid " + col + ";border-radius:3px;left:" + (x - 3) + "px;top:" + (y - 3) + "px;width:" + (w + 6) + "px;height:" + (hh + 6) + "px;box-sizing:border-box" }));
         const cand = [];
         for (let k = 0; k < 8; k++){ cand.push([x + w / 2 - W / 2, y - S - 4 - k * (S + 2)], [x + w / 2 - W / 2, y + hh + 4 + k * (S + 2)], [x - W - 4 - k * 8, y + hh / 2 - S / 2], [x + w + 4 + k * 8, y + hh / 2 - S / 2]); }
@@ -1341,7 +1342,8 @@ function renderDrawing(body, mode){
         page.appendChild(h("div", { class:"mod-pin", style:"position:absolute;z-index:3;cursor:pointer;display:flex;align-items:center;gap:4px;left:" + pos[0] + "px;top:" + pos[1] + "px;width:" + W + "px;height:" + S + "px;box-sizing:border-box;padding:0 " + (on ? 6 : 0) + "px 0 0;border-radius:" + S + "px;background:#FFF;border:2px solid " + col + ";box-shadow:0 1px 3px rgba(0,0,0,.25)",
           onclick: e => { e.stopPropagation(); select(ri); if (rowEls[ri]) rowEls[ri].scrollIntoView({ block:"nearest" }); } }, [
           h("span", { class:"mod-pin-no", text:String(r.mk.no), style:"flex-shrink:0;width:" + (S - 4) + "px;height:" + (S - 4) + "px;border-radius:50%;background:" + col + ";color:#FFF;font:800 12px/" + (S - 4) + "px sans-serif;text-align:center" }),
-          on ? h("span", { class:"mod-pin-mid", text:mt, style:MONO + ";font-size:14px;font-weight:800;color:" + col + ";white-space:nowrap" }) : null
+          on ? h("span", { class:"mod-pin-mid", text:mt, style:MONO + ";font-size:14px;font-weight:800;color:" + col + ";white-space:nowrap" }) : null,
+          on ? h("span", { class:"mod-pin-dlt", text:dt, style:MONO + ";font-size:13px;font-weight:800;color:#0062CC;white-space:nowrap;margin-left:-4px" }) : null
         ]));
       }); });
       if (lines.length){ const sv = document.createElementNS("http://www.w3.org/2000/svg", "svg"); sv.setAttribute("class", "mod-lines"); sv.setAttribute("width", cv.w); sv.setAttribute("height", cv.h);
